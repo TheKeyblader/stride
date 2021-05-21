@@ -5,9 +5,13 @@
 using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
-using SharpDX;
-using SharpDX.Direct3D11;
+
+
+using Silk.NET.Core.Native;
+using Silk.NET.DXGI;
+using Silk.NET.Direct3D11;
 using Stride.Core;
+using System.Runtime.CompilerServices;
 
 namespace Stride.Graphics
 {
@@ -20,14 +24,14 @@ namespace Stride.Graphics
         private bool simulateReset = false;
         private string rendererName;
 
-        private Device nativeDevice;
-        private DeviceContext nativeDeviceContext;
-        private readonly Queue<Query> disjointQueries = new Queue<Query>(4);
-        private readonly Stack<Query> currentDisjointQueries = new Stack<Query>(2);
+        private unsafe ID3D11Device* nativeDevice;
+        private unsafe ID3D11DeviceContext* nativeDeviceContext;
+        private readonly Queue<ComPtr<ID3D11Query>> disjointQueries = new(4);
+        private readonly Stack<ComPtr<ID3D11Query>> currentDisjointQueries = new(2);
 
         internal GraphicsProfile RequestedProfile;
 
-        private SharpDX.Direct3D11.DeviceCreationFlags creationFlags;
+        private CreateDeviceFlag creationFlags;
 
         /// <summary>
         /// The tick frquency of timestamp queries in Hertz.
@@ -48,33 +52,37 @@ namespace Stride.Graphics
                     return GraphicsDeviceStatus.Reset;
                 }
 
-                var result = NativeDevice.DeviceRemovedReason;
-                if (result == SharpDX.DXGI.ResultCode.DeviceRemoved)
+                DXGIError result;
+                unsafe
+                {
+                    result = (DXGIError)NativeDevice->GetDeviceRemovedReason();
+                }
+                if (result == DXGIError.DeviceRemoved)
                 {
                     return GraphicsDeviceStatus.Removed;
                 }
 
-                if (result == SharpDX.DXGI.ResultCode.DeviceReset)
+                if (result == DXGIError.DeviceReset)
                 {
                     return GraphicsDeviceStatus.Reset;
                 }
 
-                if (result == SharpDX.DXGI.ResultCode.DeviceHung)
+                if (result == DXGIError.DeviceHung)
                 {
                     return GraphicsDeviceStatus.Hung;
                 }
 
-                if (result == SharpDX.DXGI.ResultCode.DriverInternalError)
+                if (result == DXGIError.DriverInternalError)
                 {
                     return GraphicsDeviceStatus.InternalError;
                 }
 
-                if (result == SharpDX.DXGI.ResultCode.InvalidCall)
+                if (result == DXGIError.InvalidCall)
                 {
                     return GraphicsDeviceStatus.InvalidCall;
                 }
 
-                if (result.Code < 0)
+                if (result < 0)
                 {
                     return GraphicsDeviceStatus.Reset;
                 }
@@ -87,7 +95,7 @@ namespace Stride.Graphics
         ///     Gets the native device.
         /// </summary>
         /// <value>The native device.</value>
-        internal SharpDX.Direct3D11.Device NativeDevice
+        internal unsafe ID3D11Device* NativeDevice
         {
             get
             {
@@ -99,7 +107,7 @@ namespace Stride.Graphics
         /// Gets the native device context.
         /// </summary>
         /// <value>The native device context.</value>
-        internal SharpDX.Direct3D11.DeviceContext NativeDeviceContext
+        internal unsafe ID3D11DeviceContext* NativeDeviceContext
         {
             get
             {
@@ -115,22 +123,40 @@ namespace Stride.Graphics
             FrameTriangleCount = 0;
             FrameDrawCalls = 0;
 
-            Query currentDisjointQuery;
+            using ComPtr<QueryDataTimestampDisjoint> result = null;
 
-            // Try to read back the oldest disjoint query and reuse it. If not ready, create a new one.
-            if (disjointQueries.Count > 0 && NativeDeviceContext.GetData(disjointQueries.Peek(), out QueryDataTimestampDisjoint result))
+            ComPtr<ID3D11Query> currentDisjointQuery;
+            unsafe
             {
-                TimestampFrequency = result.Frequency;
-                currentDisjointQuery = disjointQueries.Dequeue();
-            }
-            else
-            {
-                var disjointQueryDiscription = new QueryDescription { Type = SharpDX.Direct3D11.QueryType.TimestampDisjoint };
-                currentDisjointQuery = new Query(NativeDevice, disjointQueryDiscription);
-            }
+                // Try to read back the oldest disjoint query and reuse it. If not ready, create a new one.
+                if (disjointQueries.Count > 0 &&
+                    ((HResult)NativeDeviceContext->GetData((ID3D11Asynchronous*)disjointQueries.Peek().Handle,
+                                                           result.GetAddressOf(),
+                                                           (uint)sizeof(QueryDataTimestampDisjoint),
+                                                           0)
+                    ).IsSuccess)
+                {
+                    TimestampFrequency = (long)result.Get().Frequency;
+                    currentDisjointQuery = disjointQueries.Dequeue();
+                }
+                else
+                {
+                    var disjointQueryDiscription = new QueryDesc { Query = Query.QueryTimestampDisjoint };
 
-            currentDisjointQueries.Push(currentDisjointQuery);
-            NativeDeviceContext.Begin(currentDisjointQuery);
+                    ID3D11Query* query;
+                    SilkMarshal.ThrowHResult(
+                        NativeDevice->CreateQuery
+                        (
+                            &disjointQueryDiscription,
+                            &query
+                        )
+                    );
+                    currentDisjointQuery = new ComPtr<ID3D11Query>(query);
+                }
+
+                currentDisjointQueries.Push(currentDisjointQuery);
+                NativeDeviceContext->Begin((ID3D11Asynchronous*)currentDisjointQuery.Handle);
+            }
         }
 
         /// <summary>
@@ -148,7 +174,10 @@ namespace Stride.Graphics
         {
             // If this fails, it means Begin()/End() don't match, something is very wrong
             var currentDisjointQuery = currentDisjointQueries.Pop();
-            NativeDeviceContext.End(currentDisjointQuery);
+            unsafe
+            {
+                NativeDeviceContext->End((ID3D11Asynchronous*)currentDisjointQuery.Handle);
+            }
             disjointQueries.Enqueue(currentDisjointQuery);
         }
 
@@ -192,7 +221,7 @@ namespace Stride.Graphics
         /// <param name="graphicsProfiles">The graphics profiles.</param>
         /// <param name="deviceCreationFlags">The device creation flags.</param>
         /// <param name="windowHandle">The window handle.</param>
-        private void InitializePlatformDevice(GraphicsProfile[] graphicsProfiles, DeviceCreationFlags deviceCreationFlags, object windowHandle)
+        private unsafe void InitializePlatformDevice(GraphicsProfile[] graphicsProfiles, DeviceCreationFlags deviceCreationFlags, object windowHandle)
         {
             if (nativeDevice != null)
             {
@@ -200,13 +229,15 @@ namespace Stride.Graphics
                 ReleaseDevice();
             }
 
-            rendererName = Adapter.NativeAdapter.Description.Description;
+            AdapterDesc desc = default;
+            SilkMarshal.ThrowHResult(Adapter.NativeAdapter->GetDesc(ref desc));
+            rendererName = new(desc.Description);
 
             // Profiling is supported through pix markers
             IsProfilingSupported = true;
 
             // Map GraphicsProfile to D3D11 FeatureLevel
-            creationFlags = (SharpDX.Direct3D11.DeviceCreationFlags)deviceCreationFlags;
+            creationFlags = (CreateDeviceFlag)deviceCreationFlags;
 
             // Create Device D3D11 with feature Level based on profile
             for (int index = 0; index < graphicsProfiles.Length; index++)
@@ -220,18 +251,38 @@ namespace Stride.Graphics
                     // INTEL workaround: it seems Intel driver doesn't support properly feature level 9.x. Fallback to 10.
                     if (Adapter.VendorId == 0x8086)
                     {
-                        if (level < SharpDX.Direct3D.FeatureLevel.Level_10_0)
-                            level = SharpDX.Direct3D.FeatureLevel.Level_10_0;
+                        if (level < D3DFeatureLevel.D3DFeatureLevel100)
+                            level = D3DFeatureLevel.D3DFeatureLevel100;
                     }
 
                     if (Core.Platform.Type == PlatformType.Windows
                         && GetModuleHandle("renderdoc.dll") != IntPtr.Zero)
                     {
-                        if (level < SharpDX.Direct3D.FeatureLevel.Level_11_0)
-                            level = SharpDX.Direct3D.FeatureLevel.Level_11_0;
+                        if (level < D3DFeatureLevel.D3DFeatureLevel110)
+                            level = D3DFeatureLevel.D3DFeatureLevel110;
                     }
 
-                    nativeDevice = new SharpDX.Direct3D11.Device(Adapter.NativeAdapter, creationFlags, level);
+                    fixed (D3DFeatureLevel* levels = new[] { level })
+                    fixed (ID3D11Device** temp = &nativeDevice)
+                    {
+                        var api = D3D11.GetApi();
+                        SilkMarshal.ThrowHResult
+                        (
+                            api.CreateDevice
+                            (
+                                (IDXGIAdapter*)Adapter.NativeAdapter,
+                                D3DDriverType.D3DDriverTypeUnknown,
+                                0,
+                                (uint)creationFlags,
+                                levels,
+                                1,
+                                D3D11.SdkVersion,
+                                temp,
+                                null,
+                                null
+                            )
+                        );
+                    }
 
                     // INTEL workaround: force ShaderProfile to be 10+ as well
                     if (Adapter.VendorId == 0x8086)
@@ -250,12 +301,12 @@ namespace Stride.Graphics
                 }
             }
 
-            nativeDeviceContext = nativeDevice.ImmediateContext;
+            nativeDevice->GetImmediateContext(ref nativeDeviceContext);
             // We keep one reference so that it doesn't disappear with InternalMainCommandList
-            ((IUnknown)nativeDeviceContext).AddReference();
+            ((IUnknown*)nativeDeviceContext)->AddRef();
             if (IsDebugMode)
             {
-                GraphicsResourceBase.SetDebugName(this, nativeDeviceContext, "ImmediateContext");
+                GraphicsResourceBase.SetDebugName(this, (ID3D11DeviceChild*)nativeDeviceContext, "ImmediateContext");
             }
         }
 
@@ -271,7 +322,7 @@ namespace Stride.Graphics
             ReleaseDevice();
         }
 
-        private void ReleaseDevice()
+        private unsafe void ReleaseDevice()
         {
             foreach (var query in disjointQueries)
             {
@@ -280,20 +331,23 @@ namespace Stride.Graphics
             disjointQueries.Clear();
 
             // Display D3D11 ref counting info
-            NativeDevice.ImmediateContext.ClearState();
-            NativeDevice.ImmediateContext.Flush();
+            ID3D11DeviceContext* immediate = null;
+            NativeDevice->GetImmediateContext(ref immediate);
+            immediate->ClearState();
+            immediate->Flush();
 
             if (IsDebugMode)
             {
-                var debugDevice = NativeDevice.QueryInterfaceOrNull<SharpDX.Direct3D11.DeviceDebug>();
+                ID3D11Debug* debugDevice = null;
+                SilkMarshal.ThrowHResult(NativeDevice->QueryInterface(ref SilkMarshal.GuidOf<ID3D11Debug>(), (void**)debugDevice));
                 if (debugDevice != null)
                 {
-                    debugDevice.ReportLiveDeviceObjects(SharpDX.Direct3D11.ReportingLevel.Detail);
-                    debugDevice.Dispose();
+                    SilkMarshal.ThrowHResult(debugDevice->ReportLiveDeviceObjects(RldoFlags.RldoDetail));
+                    debugDevice->Release();
                 }
             }
 
-            nativeDevice.Dispose();
+            nativeDevice->Release();
             nativeDevice = null;
         }
 

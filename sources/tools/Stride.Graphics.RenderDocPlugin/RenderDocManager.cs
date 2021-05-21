@@ -100,12 +100,12 @@ namespace Stride.Graphics
             isCaptureStarted = false;
         }
 
-        private static IntPtr GetDevicePointer(GraphicsDevice graphicsDevice)
+        private unsafe static IntPtr GetDevicePointer(GraphicsDevice graphicsDevice)
         {
             var devicePointer = IntPtr.Zero;
 #if STRIDE_GRAPHICS_API_DIRECT3D11 || STRIDE_GRAPHICS_API_DIRECT3D12
             if (graphicsDevice != null)
-                devicePointer = ((SharpDX.CppObject)SharpDXInterop.GetNativeDevice(graphicsDevice)).NativePointer;
+                devicePointer = new IntPtr(SharpDXInterop.GetNativeDevice(graphicsDevice)->LpVtbl);
 #endif
             return devicePointer;
         }

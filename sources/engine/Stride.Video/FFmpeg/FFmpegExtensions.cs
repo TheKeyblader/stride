@@ -1,7 +1,7 @@
 #if STRIDE_GRAPHICS_API_DIRECT3D11 && STRIDE_VIDEO_FFMPEG
 using System;
 using FFmpeg.AutoGen;
-using SharpDX.Direct3D11;
+using Silk.NET.Direct3D11;
 
 namespace Stride.Video.FFmpeg
 {
@@ -29,22 +29,22 @@ namespace Stride.Video.FFmpeg
             return new D3D11_VIDEO_DECODER_CONFIG
             {
                 guidConfigBitstreamEncryption = configuration.GuidConfigBitstreamEncryption.ToGUID(),
-                Config4GroupedCoefs = (uint)configuration.Config4GroupedCoefs,
-                ConfigSpecificIDCT = (uint)configuration.ConfigSpecificIDCT,
-                ConfigHostInverseScan = (uint)configuration.ConfigHostInverseScan,
-                ConfigResidDiffAccelerator = (uint)configuration.ConfigResidDiffAccelerator,
-                ConfigIntraResidUnsigned = (uint)configuration.ConfigIntraResidUnsigned,
-                ConfigSpatialResidInterleaved = (uint)configuration.ConfigSpatialResidInterleaved,
-                ConfigMinRenderTargetBuffCount = (ushort)configuration.ConfigMinRenderTargetBuffCount,
-                ConfigSpatialHost8or9Clipping = (uint)configuration.ConfigSpatialHost8or9Clipping,
-                ConfigSpatialResid8 = (uint)configuration.ConfigSpatialResid8,
-                ConfigResidDiffHost = (uint)configuration.ConfigResidDiffHost,
-                ConfigMBcontrolRasterOrder = (uint)configuration.ConfigMBcontrolRasterOrder,
-                ConfigBitstreamRaw = (uint)configuration.ConfigBitstreamRaw,
+                Config4GroupedCoefs = configuration.Config4GroupedCoefs,
+                ConfigSpecificIDCT = configuration.ConfigSpecificIDCT,
+                ConfigHostInverseScan = configuration.ConfigHostInverseScan,
+                ConfigResidDiffAccelerator = configuration.ConfigResidDiffAccelerator,
+                ConfigIntraResidUnsigned = configuration.ConfigIntraResidUnsigned,
+                ConfigSpatialResidInterleaved = configuration.ConfigSpatialResidInterleaved,
+                ConfigMinRenderTargetBuffCount = configuration.ConfigMinRenderTargetBuffCount,
+                ConfigSpatialHost8or9Clipping = configuration.ConfigSpatialHost8or9Clipping,
+                ConfigSpatialResid8 = configuration.ConfigSpatialResid8,
+                ConfigResidDiffHost = configuration.ConfigResidDiffHost,
+                ConfigMBcontrolRasterOrder = configuration.ConfigMBcontrolRasterOrder,
+                ConfigBitstreamRaw = configuration.ConfigBitstreamRaw,
                 guidConfigResidDiffEncryption = configuration.GuidConfigResidDiffEncryption.ToGUID(),
                 guidConfigMBcontrolEncryption = configuration.GuidConfigMBcontrolEncryption.ToGUID(),
-                ConfigResid8Subtraction = (uint)configuration.ConfigResid8Subtraction,
-                ConfigDecoderSpecific = (ushort)configuration.ConfigDecoderSpecific
+                ConfigResid8Subtraction = configuration.ConfigResid8Subtraction,
+                ConfigDecoderSpecific = configuration.ConfigDecoderSpecific
             };
         }
     }

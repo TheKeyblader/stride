@@ -84,7 +84,7 @@ namespace Stride.Graphics
                             }
                         case EffectParameterClass.UnorderedAccessView:
                             {
-                                commandList.SetUnorderedAccessView(bindingOperation.Stage, bindingOperation.SlotStart, (GraphicsResource)value.Value, value.Offset);
+                                commandList.SetUnorderedAccessView(bindingOperation.Stage, bindingOperation.SlotStart, (GraphicsResource)value.Value, (uint)value.Offset);
                                 break;
                             }
                         default:

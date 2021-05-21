@@ -3,9 +3,9 @@
 
 #if STRIDE_GRAPHICS_API_DIRECT3D11 || STRIDE_GRAPHICS_API_DIRECT3D12
 
-using SharpDX;
 #if STRIDE_GRAPHICS_API_DIRECT3D11
-using SharpDX.Direct3D11;
+using Silk.NET.Core.Native;
+using Silk.NET.Direct3D11;
 #elif STRIDE_GRAPHICS_API_DIRECT3D12
 using SharpDX.Direct3D12;
 #endif
@@ -19,7 +19,7 @@ namespace Stride.Graphics
         /// </summary>
         /// <param name="device">The Stride GraphicsDevice</param>
         /// <returns></returns>
-        public static object GetNativeDevice(GraphicsDevice device)
+        public static unsafe ID3D11Device* GetNativeDevice(GraphicsDevice device)
         {
             return GetNativeDeviceImpl(device);
         }
@@ -29,7 +29,7 @@ namespace Stride.Graphics
         /// </summary>
         /// <param name="device">The Stride GraphicsDevice</param>
         /// <returns></returns>
-        public static object GetNativeDeviceContext(GraphicsDevice device)
+        public static unsafe ID3D11DeviceContext* GetNativeDeviceContext(GraphicsDevice device)
         {
             return GetNativeDeviceContextImpl(device);
         }
@@ -49,17 +49,17 @@ namespace Stride.Graphics
         /// </summary>
         /// <param name="resource">The Stride GraphicsResourceBase</param>
         /// <returns></returns>
-        public static object GetNativeResource(GraphicsResource resource)
+        public static unsafe ID3D11Resource* GetNativeResource(GraphicsResource resource)
         {
             return GetNativeResourceImpl(resource);
         }
 
-        public static object GetNativeShaderResourceView(GraphicsResource resource)
+        public static unsafe ID3D11ShaderResourceView* GetNativeShaderResourceView(GraphicsResource resource)
         {
             return GetNativeShaderResourceViewImpl(resource);
         }
 
-        public static object GetNativeRenderTargetView(Texture texture)
+        public static unsafe ID3D11RenderTargetView* GetNativeRenderTargetView(Texture texture)
         {
             return GetNativeRenderTargetViewImpl(texture);
         }
@@ -73,10 +73,10 @@ namespace Stride.Graphics
         /// <param name="takeOwnership">If false AddRef will be called on the texture, if true will not, effectively taking ownership</param>
         /// <param name="isSRgb">Set the format to SRgb</param>
         /// <returns></returns>
-        public static Texture CreateTextureFromNative(GraphicsDevice device, object dxTexture2D, bool takeOwnership, bool isSRgb = false)
+        public static unsafe Texture CreateTextureFromNative(GraphicsDevice device, ID3D11Texture2D* dxTexture2D, bool takeOwnership, bool isSRgb = false)
         {
 #if STRIDE_GRAPHICS_API_DIRECT3D11
-            return CreateTextureFromNativeImpl(device, (Texture2D)dxTexture2D, takeOwnership, isSRgb);
+            return CreateTextureFromNativeImpl(device, dxTexture2D, takeOwnership, isSRgb);
 #elif STRIDE_GRAPHICS_API_DIRECT3D12
             return CreateTextureFromNativeImpl(device, (Resource)dxTexture2D, takeOwnership, isSRgb);
 #endif
@@ -88,12 +88,12 @@ namespace Stride.Graphics
         /// </summary>
         /// <param name="device">The Stride GraphicsDevice</param>
         /// <returns></returns>
-        private static Device GetNativeDeviceImpl(GraphicsDevice device)
+        private static unsafe ID3D11Device* GetNativeDeviceImpl(GraphicsDevice device)
         {
             return device.NativeDevice;
         }
 
-        private static DeviceContext GetNativeDeviceContextImpl(GraphicsDevice device)
+        private static unsafe ID3D11DeviceContext* GetNativeDeviceContextImpl(GraphicsDevice device)
         {
             return device.NativeDeviceContext;
         }
@@ -108,17 +108,17 @@ namespace Stride.Graphics
         /// </summary>
         /// <param name="resource">The Stride GraphicsResourceBase</param>
         /// <returns></returns>
-        private static Resource GetNativeResourceImpl(GraphicsResource resource)
+        private static unsafe ID3D11Resource* GetNativeResourceImpl(GraphicsResource resource)
         {
             return resource.NativeResource;
         }
 
-        private static ShaderResourceView GetNativeShaderResourceViewImpl(GraphicsResource resource)
+        private static unsafe ID3D11ShaderResourceView* GetNativeShaderResourceViewImpl(GraphicsResource resource)
         {
             return resource.NativeShaderResourceView;
         }
 
-        private static RenderTargetView GetNativeRenderTargetViewImpl(Texture texture)
+        private static unsafe ID3D11RenderTargetView* GetNativeRenderTargetViewImpl(Texture texture)
         {
             return texture.NativeRenderTargetView;
         }
@@ -132,14 +132,14 @@ namespace Stride.Graphics
         /// <param name="takeOwnership">If false AddRef will be called on the texture, if true will not, effectively taking ownership</param>
         /// <param name="isSRgb">Set the format to SRgb</param>
         /// <returns></returns>
-        private static Texture CreateTextureFromNativeImpl(GraphicsDevice device, Texture2D dxTexture2D, bool takeOwnership, bool isSRgb = false)
+        private static unsafe Texture CreateTextureFromNativeImpl(GraphicsDevice device, ID3D11Texture2D* dxTexture2D, bool takeOwnership, bool isSRgb = false)
         {
             var tex = new Texture(device);
 
             if (takeOwnership)
             {
-                var unknown = dxTexture2D as IUnknown;
-                unknown.AddReference();
+                var unknown = (IUnknown*)dxTexture2D;
+                unknown->AddRef();
             }
 
             tex.InitializeFromImpl(dxTexture2D, isSRgb);

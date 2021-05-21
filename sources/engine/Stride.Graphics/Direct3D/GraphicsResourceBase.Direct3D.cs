@@ -5,7 +5,8 @@
 using System;
 using System.Diagnostics;
 
-using SharpDX;
+using Silk.NET.Core.Native;
+using Silk.NET.Direct3D11;
 
 namespace Stride.Graphics
 {
@@ -14,9 +15,9 @@ namespace Stride.Graphics
     /// </summary>
     public abstract partial class GraphicsResourceBase
     {
-        private SharpDX.Direct3D11.DeviceChild nativeDeviceChild;
+        private unsafe ID3D11DeviceChild* nativeDeviceChild;
 
-        protected internal SharpDX.Direct3D11.Resource NativeResource { get; private set; }
+        protected internal unsafe ID3D11Resource* NativeResource { get; private set; }
 
         private void Initialize()
         {
@@ -26,16 +27,16 @@ namespace Stride.Graphics
         /// Gets or sets the device child.
         /// </summary>
         /// <value>The device child.</value>
-        protected internal SharpDX.Direct3D11.DeviceChild NativeDeviceChild
+        protected internal unsafe ID3D11Resource* NativeDeviceChild
         {
             get
             {
-                return nativeDeviceChild;
+                return (ID3D11Resource*)nativeDeviceChild;
             }
             set
             {
-                nativeDeviceChild = value;
-                NativeResource = nativeDeviceChild as SharpDX.Direct3D11.Resource;
+                nativeDeviceChild = (ID3D11DeviceChild*)value;
+                NativeResource = (ID3D11Resource*)nativeDeviceChild;
                 // Associate PrivateData to this DeviceResource
                 SetDebugName(GraphicsDevice, nativeDeviceChild, Name);
             }
@@ -44,22 +45,22 @@ namespace Stride.Graphics
         /// <summary>
         /// Associates the private data to the device child, useful to get the name in PIX debugger.
         /// </summary>
-        internal static void SetDebugName(GraphicsDevice graphicsDevice, SharpDX.Direct3D11.DeviceChild deviceChild, string name)
+        internal static unsafe void SetDebugName(GraphicsDevice graphicsDevice, ID3D11DeviceChild* deviceChild, string name)
         {
             if (graphicsDevice.IsDebugMode && deviceChild != null)
             {
-                deviceChild.DebugName = name;
+                //deviceChild.DebugName = name;
             }
         }
 
         /// <summary>
         /// Called when graphics device has been detected to be internally destroyed.
         /// </summary>
-        protected internal virtual void OnDestroyed()
+        protected internal unsafe virtual void OnDestroyed()
         {
             Destroyed?.Invoke(this, EventArgs.Empty);
 
-            ReleaseComObject(ref nativeDeviceChild);
+            ReleaseComObject((IUnknown*)nativeDeviceChild);
             NativeResource = null;
         }
 
@@ -72,7 +73,7 @@ namespace Stride.Graphics
             return false;
         }
 
-        protected SharpDX.Direct3D11.Device NativeDevice
+        protected unsafe ID3D11Device* NativeDevice
         {
             get
             {
@@ -85,30 +86,29 @@ namespace Stride.Graphics
         /// </summary>
         /// <param name="usage">The usage.</param>
         /// <returns></returns>
-        internal static SharpDX.Direct3D11.CpuAccessFlags GetCpuAccessFlagsFromUsage(GraphicsResourceUsage usage)
+        internal static CpuAccessFlag GetCpuAccessFlagsFromUsage(GraphicsResourceUsage usage)
         {
             switch (usage)
             {
                 case GraphicsResourceUsage.Dynamic:
-                    return SharpDX.Direct3D11.CpuAccessFlags.Write;
+                    return CpuAccessFlag.CpuAccessWrite;
                 case GraphicsResourceUsage.Staging:
-                    return SharpDX.Direct3D11.CpuAccessFlags.Read | SharpDX.Direct3D11.CpuAccessFlags.Write;
+                    return CpuAccessFlag.CpuAccessRead | CpuAccessFlag.CpuAccessWrite;
             }
-            return SharpDX.Direct3D11.CpuAccessFlags.None;
+            return 0;
         }
 
-        internal static void ReleaseComObject<T>(ref T comObject) where T : class
+        internal static unsafe void ReleaseComObject(IUnknown* @object)
         {
             // We can't put IUnknown as a constraint on the generic as it would break compilation (trying to import SharpDX in projects with InternalVisibleTo)
-            var iUnknownObject = comObject as IUnknown;
-            if (iUnknownObject != null)
+            if (@object != null)
             {
-                var refCountResult = iUnknownObject.Release();
+                var refCountResult = @object->Release();
                 Debug.Assert(refCountResult >= 0);
-                comObject = null;
+                @object = null;
             }
         }
     }
 }
- 
+
 #endif

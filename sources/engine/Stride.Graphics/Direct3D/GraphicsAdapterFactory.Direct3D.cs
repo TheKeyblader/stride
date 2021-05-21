@@ -2,7 +2,8 @@
 // Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
 #if STRIDE_GRAPHICS_API_DIRECT3D
 using System.Collections.Generic;
-using SharpDX.DXGI;
+using Silk.NET.Core.Native;
+using Silk.NET.DXGI;
 
 namespace Stride.Graphics
 {
@@ -11,15 +12,16 @@ namespace Stride.Graphics
 #if STRIDE_PLATFORM_UWP || DIRECTX11_1
         internal static Factory2 NativeFactory;
 #else
-        internal static Factory1 NativeFactory;
+        internal unsafe static IDXGIFactory1* NativeFactory;
 #endif
 
         /// <summary>
         /// Initializes all adapters with the specified factory.
         /// </summary>
-        internal static void InitializeInternal()
+        internal unsafe static void InitializeInternal()
         {
             staticCollector.Dispose();
+            var api = DXGI.GetApi();
 
 #if DIRECTX11_1
             using (var factory = new Factory1())
@@ -28,16 +30,18 @@ namespace Stride.Graphics
             // Maybe this will become default code for everybody if we switch to DX 11.1/11.2 SharpDX dll?
             NativeFactory = new Factory2();
 #else
-            NativeFactory = new Factory1();
+            fixed (IDXGIFactory1** temp = &NativeFactory)
+                SilkMarshal.ThrowHResult(api.CreateDXGIFactory1(ref SilkMarshal.GuidOf<IDXGIFactory1>(), (void**)temp));
 #endif
 
-            staticCollector.Add(NativeFactory);
+            staticCollector.Add(new ComPtr<IDXGIFactory1>(NativeFactory));
 
-            int countAdapters = NativeFactory.GetAdapterCount1();
             var adapterList = new List<GraphicsAdapter>();
-            for (int i = 0; i < countAdapters; i++)
+            uint i = 0;
+            IDXGIAdapter1* pAdapter = null;
+            while (NativeFactory->EnumAdapters1(i, &pAdapter) != unchecked((int)DXGIError.NotFound))
             {
-                var adapter = new GraphicsAdapter(NativeFactory, i);
+                var adapter = new GraphicsAdapter(NativeFactory, (int)i);
                 staticCollector.Add(adapter);
                 adapterList.Add(adapter);
             }
@@ -49,7 +53,7 @@ namespace Stride.Graphics
         /// <summary>
         /// Gets the <see cref="Factory1"/> used by all GraphicsAdapter.
         /// </summary>
-        internal static Factory1 Factory
+        internal unsafe static IDXGIFactory1* Factory
         {
             get
             {

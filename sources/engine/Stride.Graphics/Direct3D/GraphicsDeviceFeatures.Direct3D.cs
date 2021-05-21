@@ -23,8 +23,10 @@
 
 using System;
 using System.Collections.Generic;
-using SharpDX.Direct3D11;
-using SharpDX.DXGI;
+using Silk.NET.Core.Native;
+using Silk.NET.Direct3D11;
+using Silk.NET.DXGI;
+using Feature = Silk.NET.Direct3D11.Feature;
 
 namespace Stride.Graphics
 {
@@ -36,9 +38,9 @@ namespace Stride.Graphics
     /// </remarks>
     public partial struct GraphicsDeviceFeatures
     {
-        private static readonly List<SharpDX.DXGI.Format> ObsoleteFormatToExcludes = new List<SharpDX.DXGI.Format>() { Format.R1_UNorm, Format.B5G6R5_UNorm, Format.B5G5R5A1_UNorm };
+        private static readonly List<Format> ObsoleteFormatToExcludes = new List<Format>() { Format.FormatR1Unorm, Format.FormatB5G6R5Unorm, Format.FormatB5G5R5A1Unorm };
 
-        internal GraphicsDeviceFeatures(GraphicsDevice deviceRoot)
+        internal unsafe GraphicsDeviceFeatures(GraphicsDevice deviceRoot)
         {
             var nativeDevice = deviceRoot.NativeDevice;
 
@@ -48,37 +50,42 @@ namespace Stride.Graphics
 
             // Set back the real GraphicsProfile that is used
             RequestedProfile = deviceRoot.RequestedProfile;
-            CurrentProfile = GraphicsProfileHelper.FromFeatureLevel(nativeDevice.FeatureLevel);
+            CurrentProfile = GraphicsProfileHelper.FromFeatureLevel(nativeDevice->GetFeatureLevel());
 
             HasResourceRenaming = true;
 
-            HasComputeShaders = nativeDevice.CheckFeatureSupport(SharpDX.Direct3D11.Feature.ComputeShaders);
-            HasDoublePrecision = nativeDevice.CheckFeatureSupport(SharpDX.Direct3D11.Feature.ShaderDoubles);
-            nativeDevice.CheckThreadingSupport(out HasMultiThreadingConcurrentResources, out this.HasDriverCommandLists);
+            FeatureDataFormatSupport2* computeShaders = null;
+            SilkMarshal.ThrowHResult(nativeDevice->CheckFeatureSupport(Feature.FeatureFormatSupport2, computeShaders, (uint)sizeof(FeatureDataFormatSupport2)));
+            HasComputeShaders = computeShaders != null;
+
+            FeatureDataDoubles* doublePrecision = null;
+            SilkMarshal.ThrowHResult(nativeDevice->CheckFeatureSupport(Feature.FeatureDoubles, doublePrecision, (uint)sizeof(FeatureDataDoubles)));
+            HasDoublePrecision = doublePrecision != null;
+
+            FeatureDataThreading* threading = null;
+            SilkMarshal.ThrowHResult(nativeDevice->CheckFeatureSupport(Feature.FeatureThreading, threading, (uint)sizeof(FeatureDataThreading)));
+            HasMultiThreadingConcurrentResources = threading->DriverConcurrentCreates == 1;
+            HasDriverCommandLists = threading->DriverCommandLists == 1;
 
             HasDepthAsSRV = (CurrentProfile >= GraphicsProfile.Level_10_0);
             HasDepthAsReadOnlyRT = CurrentProfile >= GraphicsProfile.Level_11_0;
             HasMultisampleDepthAsSRV = CurrentProfile >= GraphicsProfile.Level_11_0;
 
             // Check features for each DXGI.Format
-            foreach (var format in Enum.GetValues(typeof(SharpDX.DXGI.Format)))
+            foreach (var format in Enum.GetValues(typeof(Format)))
             {
-                var dxgiFormat = (SharpDX.DXGI.Format)format;
+                var dxgiFormat = (Format)format;
                 var maximumMultisampleCount = MultisampleCount.None;
-                var computeShaderFormatSupport = ComputeShaderFormatSupport.None;
-                var formatSupport = FormatSupport.None;
+                uint formatSupport = 0;
 
                 if (!ObsoleteFormatToExcludes.Contains(dxgiFormat))
                 {
                     maximumMultisampleCount = GetMaximumMultisampleCount(nativeDevice, dxgiFormat);
-                    if (HasComputeShaders)
-                        computeShaderFormatSupport = nativeDevice.CheckComputeShaderFormatSupport(dxgiFormat);
 
-                    formatSupport = (FormatSupport)nativeDevice.CheckFormatSupport(dxgiFormat);
+                    SilkMarshal.ThrowHResult(nativeDevice->CheckFormatSupport(dxgiFormat, ref formatSupport));
                 }
 
-                //mapFeaturesPerFormat[(int)dxgiFormat] = new FeaturesPerFormat((PixelFormat)dxgiFormat, maximumMultisampleCount, computeShaderFormatSupport, formatSupport);
-                mapFeaturesPerFormat[(int)dxgiFormat] = new FeaturesPerFormat((PixelFormat)dxgiFormat, maximumMultisampleCount, formatSupport);
+                mapFeaturesPerFormat[(int)dxgiFormat] = new FeaturesPerFormat((PixelFormat)dxgiFormat, maximumMultisampleCount, (FormatSupport)formatSupport);
             }
         }
 
@@ -88,13 +95,14 @@ namespace Stride.Graphics
         /// <param name="device">The device.</param>
         /// <param name="pixelFormat">The pixelFormat.</param>
         /// <returns>The maximum multisample count for this pixel pixelFormat</returns>
-        private static MultisampleCount GetMaximumMultisampleCount(SharpDX.Direct3D11.Device device, SharpDX.DXGI.Format pixelFormat)
+        private static unsafe MultisampleCount GetMaximumMultisampleCount(ID3D11Device* device, Format pixelFormat)
         {
             int maxCount = 1;
             for (int i = 1; i <= 8; i *= 2)
             {
-                if (device.CheckMultisampleQualityLevels(pixelFormat, i) != 0)
-                    maxCount = i;
+                uint result = 0;
+                SilkMarshal.ThrowHResult(device->CheckMultisampleQualityLevels(pixelFormat, (uint)i, ref result));
+                if (result != 0) maxCount = i;
             }
             return (MultisampleCount)maxCount;
         }

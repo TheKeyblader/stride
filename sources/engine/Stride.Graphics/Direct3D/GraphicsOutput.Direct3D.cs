@@ -24,9 +24,9 @@
 
 using System;
 using System.Collections.Generic;
-using SharpDX.Direct3D;
-using SharpDX.Direct3D11;
-using SharpDX.DXGI;
+using Silk.NET.Core.Native;
+using Silk.NET.Direct3D11;
+using Silk.NET.DXGI;
 
 using Stride.Core;
 using Stride.Core.Mathematics;
@@ -44,8 +44,8 @@ namespace Stride.Graphics
     public partial class GraphicsOutput
     {
         private readonly int outputIndex;
-        private readonly Output output;
-        private readonly OutputDescription outputDescription;
+        private readonly ComPtr<IDXGIOutput> output;
+        private readonly OutputDesc outputDescription;
 
         /// <summary>
         /// Initializes a new instance of <see cref="GraphicsOutput" />.
@@ -54,20 +54,24 @@ namespace Stride.Graphics
         /// <param name="outputIndex">Index of the output.</param>
         /// <exception cref="System.ArgumentNullException">output</exception>
         /// <exception cref="ArgumentOutOfRangeException">output</exception>
-        internal GraphicsOutput(GraphicsAdapter adapter, int outputIndex)
+        internal unsafe GraphicsOutput(GraphicsAdapter adapter, int outputIndex, IDXGIOutput* output)
         {
             if (adapter == null) throw new ArgumentNullException("adapter");
 
             this.outputIndex = outputIndex;
             this.adapter = adapter;
-            this.output = adapter.NativeAdapter.GetOutput(outputIndex).DisposeBy(this);
-            outputDescription = output.Description;
+            this.output = new ComPtr<IDXGIOutput>(output).DisposeBy(this);
 
-            unsafe
-            {
-                var rectangle = outputDescription.DesktopBounds;
-                desktopBounds = *(Rectangle*)&rectangle;
-            }
+            output->GetDesc(ref outputDescription);
+
+            desktopBounds = new Rectangle
+            (
+                outputDescription.DesktopCoordinates.Origin.X,
+                outputDescription.DesktopCoordinates.Origin.Y,
+                outputDescription.DesktopCoordinates.Size.X,
+                outputDescription.DesktopCoordinates.Size.Y
+            );
+
         }
 
         /// <summary>
@@ -81,35 +85,65 @@ namespace Stride.Graphics
         public DisplayMode FindClosestMatchingDisplayMode(GraphicsProfile[] targetProfiles, DisplayMode mode)
         {
             if (targetProfiles == null) throw new ArgumentNullException("targetProfiles");
-
-            ModeDescription closestDescription;
-            SharpDX.Direct3D11.Device deviceTemp = null;
-            try
+            unsafe
             {
-                var features = new SharpDX.Direct3D.FeatureLevel[targetProfiles.Length];
-                for (int i = 0; i < targetProfiles.Length; i++)
+                var api = D3D11.GetApi();
+                ID3D11Device* deviceTemp = null;
+                try
                 {
-                    features[i] = (FeatureLevel)targetProfiles[i];
+                    try
+                    {
+                        var features = new D3DFeatureLevel[targetProfiles.Length];
+                        for (int i = 0; i < targetProfiles.Length; i++)
+                        {
+                            features[i] = (D3DFeatureLevel)targetProfiles[i];
+                        }
+                        fixed (D3DFeatureLevel* featuresPtr = features)
+                        {
+                            SilkMarshal.ThrowHResult
+                            (
+                                api.CreateDevice
+                                (
+                                    (IDXGIAdapter*)adapter.NativeAdapter,
+                                    D3DDriverType.D3DDriverTypeUnknown,
+                                    0,
+                                    0,
+                                    featuresPtr,
+                                    (uint)targetProfiles.Length,
+                                    D3D11.SdkVersion,
+                                    &deviceTemp,
+                                    null,
+                                    null
+                                )
+                            );
+                        }
+                    }
+                    catch (Exception) { }
+
+                    var description = new ModeDesc()
+                    {
+                        Width = (uint)mode.Width,
+                        Height = (uint)mode.Height,
+                        RefreshRate = mode.RefreshRate.ToSilk(),
+                        Format = (Format)mode.Format,
+                        Scaling = ModeScaling.ModeScalingUnspecified,
+                        ScanlineOrdering = ModeScanlineOrder.ModeScanlineOrderUnspecified,
+                    };
+
+                    ModeDesc closestDescription = default;
+                    output.Handle->FindClosestMatchingMode(ref description, ref closestDescription, (IUnknown*)deviceTemp);
+
+                    return DisplayMode.FromDescription(closestDescription);
+
                 }
-
-                deviceTemp = new SharpDX.Direct3D11.Device(adapter.NativeAdapter, SharpDX.Direct3D11.DeviceCreationFlags.None, features);
+                finally
+                {
+                    if (deviceTemp != null)
+                        deviceTemp->Release();
+                }
             }
-            catch (Exception) { }
-
-            var description = new SharpDX.DXGI.ModeDescription()
-            {
-                Width = mode.Width,
-                Height = mode.Height,
-                RefreshRate = mode.RefreshRate.ToSharpDX(),
-                Format = (SharpDX.DXGI.Format)mode.Format,
-                Scaling = DisplayModeScaling.Unspecified,
-                ScanlineOrdering = DisplayModeScanlineOrder.Unspecified,
-            };
-            using (var device = deviceTemp)
-                output.GetClosestMatchingMode(device, description, out closestDescription);
-
-            return DisplayMode.FromDescription(closestDescription);
         }
+
 
         /// <summary>
         /// Retrieves the handle of the monitor associated with this <see cref="GraphicsOutput"/>.
@@ -117,13 +151,13 @@ namespace Stride.Graphics
         /// <msdn-id>bb173068</msdn-id>
         /// <unmanaged>HMONITOR Monitor</unmanaged>
         /// <unmanaged-short>HMONITOR Monitor</unmanaged-short>
-        public IntPtr MonitorHandle { get { return outputDescription.MonitorHandle; } }
+        public IntPtr MonitorHandle { get { return outputDescription.Monitor; } }
 
         /// <summary>
         /// Gets the native output.
         /// </summary>
         /// <value>The native output.</value>
-        internal Output NativeOutput
+        internal unsafe IDXGIOutput* NativeOutput
         {
             get
             {
@@ -134,7 +168,7 @@ namespace Stride.Graphics
         /// <summary>
         /// Enumerates all available display modes for this output and stores them in <see cref="SupportedDisplayModes"/>.
         /// </summary>
-        private void InitializeSupportedDisplayModes()
+        private unsafe void InitializeSupportedDisplayModes()
         {
             var modesAvailable = new List<DisplayMode>();
             var modesMap = new Dictionary<string, DisplayMode>();
@@ -145,7 +179,7 @@ namespace Stride.Graphics
 
             try
             {
-                const DisplayModeEnumerationFlags displayModeEnumerationFlags = DisplayModeEnumerationFlags.Interlaced | DisplayModeEnumerationFlags.Scaling;
+                const ulong displayModeEnumerationFlags = 1UL | 2UL;
 
                 foreach (var format in Enum.GetValues(typeof(SharpDX.DXGI.Format)))
                 {
@@ -153,12 +187,24 @@ namespace Stride.Graphics
 #if DIRECTX11_1
                     var modes = output1.GetDisplayModeList1(dxgiFormat, displayModeEnumerationFlags);
 #else
-                    var modes = output.GetDisplayModeList(dxgiFormat, displayModeEnumerationFlags);
+                    uint num = 0;
+
+                    SilkMarshal.ThrowHResult(
+                        output.Handle->GetDisplayModeList(dxgiFormat, (uint)displayModeEnumerationFlags, &num, null)
+                    );
+
+                    var _modesArr = new ModeDesc[num];
+                    fixed (ModeDesc* _modes = _modesArr)
+                    {
+                        SilkMarshal.ThrowHResult(
+                            output.Handle->GetDisplayModeList(dxgiFormat, (uint)displayModeEnumerationFlags, &num, _modes)
+                        );
+                    }
 #endif
 
-                    foreach (var mode in modes)
+                    foreach (var mode in _modesArr)
                     {
-                        if (mode.Scaling == DisplayModeScaling.Unspecified)
+                        if (mode.Scaling == ModeScaling.ModeScalingUnspecified)
                         {
                             var key = format + ";" + mode.Width + ";" + mode.Height + ";" + mode.RefreshRate.Numerator + ";" + mode.RefreshRate.Denominator;
 
@@ -193,8 +239,8 @@ namespace Stride.Graphics
         /// if it is not found - it checks for <see cref="Format.B8G8R8A8_UNorm"/>.</remarks>
         private void InitializeCurrentDisplayMode()
         {
-            currentDisplayMode = TryFindMatchingDisplayMode(Format.R8G8B8A8_UNorm)
-                                 ?? TryFindMatchingDisplayMode(Format.B8G8R8A8_UNorm);
+            currentDisplayMode = TryFindMatchingDisplayMode(Format.FormatR8G8B8A8Unorm)
+                                 ?? TryFindMatchingDisplayMode(Format.FormatB8G8R8A8Unorm);
         }
 
         /// <summary>
@@ -205,12 +251,12 @@ namespace Stride.Graphics
         /// <returns>A matched <see cref="DisplayMode"/> or null if nothing is found.</returns>
         private DisplayMode TryFindMatchingDisplayMode(Format format)
         {
-            var desktopBounds = outputDescription.DesktopBounds;
+            var desktopBounds = outputDescription.DesktopCoordinates;
 
             foreach (var supportedDisplayMode in SupportedDisplayModes)
             {
-                var width = desktopBounds.Right - desktopBounds.Left;
-                var height = desktopBounds.Bottom - desktopBounds.Top;
+                var width = desktopBounds.Size.X;
+                var height = desktopBounds.Size.Y;
 
                 if (supportedDisplayMode.Width == width
                     && supportedDisplayMode.Height == height

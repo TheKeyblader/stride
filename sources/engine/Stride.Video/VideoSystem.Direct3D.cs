@@ -3,8 +3,11 @@
 
 #if STRIDE_GRAPHICS_API_DIRECT3D11
 
+using System;
 using SharpDX.Direct3D;
 using SharpDX.MediaFoundation;
+using Silk.NET.Core.Native;
+using Silk.NET.Direct3D11;
 using Stride.Games;
 
 namespace Stride.Video
@@ -13,18 +16,19 @@ namespace Stride.Video
     {
         public DXGIDeviceManager DxgiDeviceManager;
 
-        public override void Initialize()
+        public unsafe override void Initialize()
         {
             base.Initialize();
 
             var graphicsDevice = Services.GetService<IGame>().GraphicsDevice;
 
             DxgiDeviceManager = new DXGIDeviceManager();
-            DxgiDeviceManager.ResetDevice(graphicsDevice.NativeDevice);
+            DxgiDeviceManager.ResetDevice(new SharpDX.ComObject(new IntPtr(graphicsDevice.NativeDevice)));
 
             //Add multi thread protection on device
-            var mt = graphicsDevice.NativeDevice.QueryInterface<DeviceMultithread>();
-            mt.SetMultithreadProtected(true);
+            ID3D11Multithread* mt = null;
+            SilkMarshal.ThrowHResult(graphicsDevice.NativeDevice->QueryInterface(ref SilkMarshal.GuidOf<ID3D11Multithread>(), (void**)&mt));
+            mt->SetMultithreadProtected(1);
 
             MediaManager.Startup();
         }

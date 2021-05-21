@@ -9,6 +9,7 @@ using Valve.VR;
 using Stride.Core;
 using Stride.Core.Mathematics;
 using Stride.Graphics;
+using Silk.NET.Direct3D11;
 
 namespace Stride.VirtualReality
 {
@@ -131,7 +132,7 @@ namespace Stride.VirtualReality
             public bool GetTouchUp(ButtonId buttonId) { return GetTouchUp(1ul << (int)buttonId); }
 
             public Vector2 GetAxis(ButtonId buttonId = ButtonId.ButtonSteamVrTouchpad)
-            {               
+            {
                 var axisId = (uint)buttonId - (uint)EVRButtonId.k_EButton_Axis0;
                 switch (axisId)
                 {
@@ -225,13 +226,13 @@ namespace Stride.VirtualReality
             InitDone = false;
         }
 
-        public static bool Submit(int eyeIndex, Texture texture, ref RectangleF viewport)
+        public unsafe static bool Submit(int eyeIndex, Texture texture, ref RectangleF viewport)
         {
             var tex = new Texture_t
             {
                 eType = ETextureType.DirectX,
                 eColorSpace = EColorSpace.Auto,
-                handle = texture.NativeResource.NativePointer,
+                handle = new IntPtr(texture.NativeResource),
             };
             var bounds = new VRTextureBounds_t
             {
@@ -401,14 +402,14 @@ namespace Stride.VirtualReality
             Valve.VR.OpenVR.Compositor.HideMirrorWindow();
         }
 
-        public static Texture GetMirrorTexture(GraphicsDevice device, int eyeIndex)
+        public unsafe static Texture GetMirrorTexture(GraphicsDevice device, int eyeIndex)
         {
-            var nativeDevice = device.NativeDevice.NativePointer;
+            var nativeDevice = device.NativeDevice;
             var eyeTexSrv = IntPtr.Zero;
-            Valve.VR.OpenVR.Compositor.GetMirrorTextureD3D11(eyeIndex == 0 ? EVREye.Eye_Left : EVREye.Eye_Right, nativeDevice, ref eyeTexSrv);
-            
+            Valve.VR.OpenVR.Compositor.GetMirrorTextureD3D11(eyeIndex == 0 ? EVREye.Eye_Left : EVREye.Eye_Right, new IntPtr(nativeDevice), ref eyeTexSrv);
+
             var tex = new Texture(device);
-            var srv = new ShaderResourceView(eyeTexSrv);
+            var srv = (ID3D11ShaderResourceView*)eyeTexSrv.ToPointer();
 
             tex.InitializeFromImpl(srv);
 
@@ -428,15 +429,15 @@ namespace Stride.VirtualReality
             Valve.VR.OpenVR.Overlay.SetOverlayFlag(overlayId, VROverlayFlags.SortWithNonSceneOverlays, true);
         }
 
-        public static bool SubmitOverlay(ulong overlayId, Texture texture)
+        public unsafe static bool SubmitOverlay(ulong overlayId, Texture texture)
         {
             var tex = new Texture_t
             {
                 eType = ETextureType.DirectX,
                 eColorSpace = EColorSpace.Auto,
-                handle = texture.NativeResource.NativePointer,
+                handle = new IntPtr(texture.NativeResource),
             };
-           
+
             return Valve.VR.OpenVR.Overlay.SetOverlayTexture(overlayId, ref tex) == EVROverlayError.None;
         }
 

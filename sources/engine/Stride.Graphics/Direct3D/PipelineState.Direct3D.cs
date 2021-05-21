@@ -8,6 +8,12 @@ using Stride.Core;
 using Stride.Core.Storage;
 using Stride.Shaders;
 
+using Silk.NET.DXGI;
+using Silk.NET.Direct3D11;
+using Silk.NET.Core.Native;
+using System.Runtime.InteropServices;
+using System.Runtime.CompilerServices;
+
 namespace Stride.Graphics
 {
     public partial class PipelineState
@@ -17,25 +23,25 @@ namespace Stride.Graphics
         private readonly EffectBytecode effectBytecode;
         internal ResourceBinder ResourceBinder;
 
-        private SharpDX.Direct3D11.VertexShader vertexShader;
-        private SharpDX.Direct3D11.GeometryShader geometryShader;
-        private SharpDX.Direct3D11.PixelShader pixelShader;
-        private SharpDX.Direct3D11.HullShader hullShader;
-        private SharpDX.Direct3D11.DomainShader domainShader;
-        private SharpDX.Direct3D11.ComputeShader computeShader;
+        private unsafe ID3D11VertexShader* vertexShader;
+        private unsafe ID3D11GeometryShader* geometryShader;
+        private unsafe ID3D11PixelShader* pixelShader;
+        private unsafe ID3D11HullShader* hullShader;
+        private unsafe ID3D11DomainShader* domainShader;
+        private unsafe ID3D11ComputeShader* computeShader;
         private byte[] inputSignature;
 
-        private readonly SharpDX.Direct3D11.BlendState blendState;
+        private readonly unsafe ID3D11BlendState* blendState;
         private readonly uint sampleMask;
-        private readonly SharpDX.Direct3D11.RasterizerState rasterizerState;
-        private readonly SharpDX.Direct3D11.DepthStencilState depthStencilState;
+        private readonly unsafe ID3D11RasterizerState* rasterizerState;
+        private readonly unsafe ID3D11DepthStencilState* depthStencilState;
 
-        private SharpDX.Direct3D11.InputLayout inputLayout;
+        private unsafe ID3D11InputLayout* inputLayout;
 
-        private readonly SharpDX.Direct3D.PrimitiveTopology primitiveTopology;
+        private readonly D3DPrimitiveTopology primitiveTopology;
         // Note: no need to store RTV/DSV formats
 
-        internal PipelineState(GraphicsDevice graphicsDevice, PipelineStateDescription pipelineStateDescription) : base(graphicsDevice)
+        internal unsafe PipelineState(GraphicsDevice graphicsDevice, PipelineStateDescription pipelineStateDescription) : base(graphicsDevice)
         {
             // First time, build caches
             var pipelineStateCache = GetPipelineStateCache();
@@ -58,10 +64,10 @@ namespace Stride.Graphics
 
             CreateInputLayout(pipelineStateDescription.InputElements);
 
-            primitiveTopology = (SharpDX.Direct3D.PrimitiveTopology)pipelineStateDescription.PrimitiveType;
+            primitiveTopology = (D3DPrimitiveTopology)pipelineStateDescription.PrimitiveType;
         }
 
-        internal void Apply(CommandList commandList, PipelineState previousPipeline)
+        internal unsafe void Apply(CommandList commandList, PipelineState previousPipeline)
         {
             var nativeDeviceContext = commandList.NativeDeviceContext;
 
@@ -73,46 +79,50 @@ namespace Stride.Graphics
             if (effectBytecode != previousPipeline.effectBytecode)
             {
                 if (computeShader != previousPipeline.computeShader)
-                    nativeDeviceContext.ComputeShader.Set(computeShader);
+                    nativeDeviceContext->CSSetShader(computeShader, null, 0);
                 if (vertexShader != previousPipeline.vertexShader)
-                    nativeDeviceContext.VertexShader.Set(vertexShader);
+                    nativeDeviceContext->VSSetShader(vertexShader, null, 0);
                 if (pixelShader != previousPipeline.pixelShader)
-                    nativeDeviceContext.PixelShader.Set(pixelShader);
+                    nativeDeviceContext->PSSetShader(pixelShader, null, 0);
                 if (hullShader != previousPipeline.hullShader)
-                    nativeDeviceContext.HullShader.Set(hullShader);
+                    nativeDeviceContext->HSSetShader(hullShader, null, 0);
                 if (domainShader != previousPipeline.domainShader)
-                    nativeDeviceContext.DomainShader.Set(domainShader);
+                    nativeDeviceContext->DSSetShader(domainShader, null, 0);
                 if (geometryShader != previousPipeline.geometryShader)
-                    nativeDeviceContext.GeometryShader.Set(geometryShader);
+                    nativeDeviceContext->GSSetShader(geometryShader, null, 0);
             }
 
             if (blendState != previousPipeline.blendState || sampleMask != previousPipeline.sampleMask)
             {
-                nativeDeviceContext.OutputMerger.SetBlendState(blendState, nativeDeviceContext.OutputMerger.BlendFactor, sampleMask);
+                float blendFactor = 0;
+                nativeDeviceContext->OMGetBlendState(null, &blendFactor, null);
+                nativeDeviceContext->OMSetBlendState(blendState, &blendFactor, sampleMask);
             }
 
             if (rasterizerState != previousPipeline.rasterizerState)
             {
-                nativeDeviceContext.Rasterizer.State = rasterizerState;
+                nativeDeviceContext->RSSetState(rasterizerState);
             }
 
             if (depthStencilState != previousPipeline.depthStencilState)
             {
-                nativeDeviceContext.OutputMerger.DepthStencilState = depthStencilState;
+                uint stencilRef = 0;
+                nativeDeviceContext->OMGetDepthStencilState(null, &stencilRef);
+                nativeDeviceContext->OMSetDepthStencilState(depthStencilState, stencilRef);
             }
 
             if (inputLayout != previousPipeline.inputLayout)
             {
-                nativeDeviceContext.InputAssembler.InputLayout = inputLayout;
+                nativeDeviceContext->IASetInputLayout(inputLayout);
             }
 
             if (primitiveTopology != previousPipeline.primitiveTopology)
             {
-                nativeDeviceContext.InputAssembler.PrimitiveTopology = primitiveTopology;
+                nativeDeviceContext->IASetPrimitiveTopology(primitiveTopology);
             }
         }
 
-        protected internal override void OnDestroyed()
+        protected unsafe internal override void OnDestroyed()
         {
             var pipelineStateCache = GetPipelineStateCache();
 
@@ -136,33 +146,44 @@ namespace Stride.Graphics
             if (computeShader != null)
                 pipelineStateCache.ComputeShaderCache.Release(computeShader);
 
-            inputLayout?.Dispose();
+            if (inputLayout != null)
+                inputLayout->Release();
 
             base.OnDestroyed();
         }
 
-        private void CreateInputLayout(InputElementDescription[] inputElements)
+        private unsafe void CreateInputLayout(InputElementDescription[] inputElements)
         {
             if (inputElements == null)
                 return;
 
-            var nativeInputElements = new SharpDX.Direct3D11.InputElement[inputElements.Length];
+            var nativeInputElements = new InputElementDesc[inputElements.Length];
             for (int index = 0; index < inputElements.Length; index++)
             {
                 var inputElement = inputElements[index];
-                nativeInputElements[index] = new SharpDX.Direct3D11.InputElement
+                nativeInputElements[index] = new InputElementDesc
                 {
-                    Slot = inputElement.InputSlot,
-                    SemanticName = inputElement.SemanticName,
-                    SemanticIndex = inputElement.SemanticIndex,
-                    AlignedByteOffset = inputElement.AlignedByteOffset,
-                    Format = (SharpDX.DXGI.Format)inputElement.Format,
+                    InputSlot = (uint)inputElement.InputSlot,
+                    SemanticName = (byte*)Marshal.StringToHGlobalAnsi(inputElement.SemanticName).ToPointer(),
+                    SemanticIndex = (uint)inputElement.SemanticIndex,
+                    AlignedByteOffset = (uint)inputElement.AlignedByteOffset,
+                    Format = (Format)inputElement.Format,
                 };
             }
-            inputLayout = new SharpDX.Direct3D11.InputLayout(NativeDevice, inputSignature, nativeInputElements);
+
+            var _inputSignature = inputSignature.AsSpan();
+            var _nativeInputElements = nativeInputElements.AsSpan();
+
+            SilkMarshal.ThrowHResult(NativeDevice->CreateInputLayout(
+                    ref _nativeInputElements.GetPinnableReference(),
+                    (uint)_nativeInputElements.Length,
+                    ref _inputSignature.GetPinnableReference(),
+                    (nuint)_inputSignature.Length,
+                    ref inputLayout
+            ));
         }
 
-        private void CreateShaders(DevicePipelineStateCache pipelineStateCache)
+        private unsafe void CreateShaders(DevicePipelineStateCache pipelineStateCache)
         {
             if (effectBytecode == null)
                 return;
@@ -191,22 +212,44 @@ namespace Stride.Graphics
                         if (reflection.ShaderStreamOutputDeclarations != null && reflection.ShaderStreamOutputDeclarations.Count > 0)
                         {
                             // stream out elements
-                            var soElements = new List<SharpDX.Direct3D11.StreamOutputElement>();
+                            var soElements = new SODeclarationEntry[reflection.ShaderStreamOutputDeclarations.Count];
+                            int i = 0;
                             foreach (var streamOutputElement in reflection.ShaderStreamOutputDeclarations)
                             {
-                                var soElem = new SharpDX.Direct3D11.StreamOutputElement()
+                                var soElem = new SODeclarationEntry
                                 {
-                                    Stream = streamOutputElement.Stream,
-                                    SemanticIndex = streamOutputElement.SemanticIndex,
-                                    SemanticName = streamOutputElement.SemanticName,
+                                    Stream = (uint)streamOutputElement.Stream,
+                                    SemanticIndex = (uint)streamOutputElement.SemanticIndex,
+                                    SemanticName = (byte*)Marshal.StringToHGlobalAnsi(streamOutputElement.SemanticName).ToPointer(),
                                     StartComponent = streamOutputElement.StartComponent,
                                     ComponentCount = streamOutputElement.ComponentCount,
                                     OutputSlot = streamOutputElement.OutputSlot
                                 };
-                                soElements.Add(soElem);
+                                soElements[i] = soElem;
+                                i++;
                             }
+
+                            var soElmentsSpan = soElements.AsSpan();
+                            var stridesSpan = reflection.StreamOutputStrides.Cast<uint>().ToArray().AsSpan();
+
+                            fixed (ID3D11GeometryShader** shader = &geometryShader)
+                            fixed (byte* pShaderBytecode = shaderBytecode.Data)
+                            {
+                                SilkMarshal.ThrowHResult(GraphicsDevice.NativeDevice->CreateGeometryShaderWithStreamOutput(
+                                    pShaderBytecode,
+                                    (nuint)shaderBytecode.Data.Length,
+                                    ref soElmentsSpan.GetPinnableReference(),
+                                    (uint)soElmentsSpan.Length,
+                                    ref stridesSpan.GetPinnableReference(),
+                                    (uint)reflection.StreamOutputStrides.Length,
+                                    (uint)reflection.StreamOutputRasterizedStream,
+                                    null,
+                                    shader)
+                                );
+                            }
+
+
                             // TODO GRAPHICS REFACTOR better cache
-                            geometryShader = new SharpDX.Direct3D11.GeometryShader(GraphicsDevice.NativeDevice, shaderBytecode, soElements.ToArray(), reflection.StreamOutputStrides, reflection.StreamOutputRasterizedStream);
                         }
                         else
                         {
@@ -224,7 +267,7 @@ namespace Stride.Graphics
         }
 
         // Small helper to cache SharpDX graphics objects
-        private class GraphicsCache<TSource, TKey, TValue> : IDisposable where TValue : SharpDX.IUnknown
+        private class GraphicsCache<TSource, TKey, TValue> : IDisposable where TValue : IDisposable
         {
             private object lockObject = new object();
 
@@ -286,7 +329,7 @@ namespace Stride.Graphics
                             storage.Remove(key);
                         }
 
-                        value.Release();
+                        value.Dispose();
                     }
                 }
             }
@@ -298,7 +341,7 @@ namespace Stride.Graphics
                     // Release everything
                     foreach (var entry in reverse)
                     {
-                        entry.Key.Release();
+                        entry.Key.Dispose();
                     }
 
                     reverse.Clear();
@@ -316,96 +359,185 @@ namespace Stride.Graphics
         // Caches
         private class DevicePipelineStateCache : IDisposable
         {
-            public readonly GraphicsCache<ShaderBytecode, ObjectId, SharpDX.Direct3D11.VertexShader> VertexShaderCache;
-            public readonly GraphicsCache<ShaderBytecode, ObjectId, SharpDX.Direct3D11.PixelShader> PixelShaderCache;
-            public readonly GraphicsCache<ShaderBytecode, ObjectId, SharpDX.Direct3D11.GeometryShader> GeometryShaderCache;
-            public readonly GraphicsCache<ShaderBytecode, ObjectId, SharpDX.Direct3D11.HullShader> HullShaderCache;
-            public readonly GraphicsCache<ShaderBytecode, ObjectId, SharpDX.Direct3D11.DomainShader> DomainShaderCache;
-            public readonly GraphicsCache<ShaderBytecode, ObjectId, SharpDX.Direct3D11.ComputeShader> ComputeShaderCache;
-            public readonly GraphicsCache<BlendStateDescription, BlendStateDescription, SharpDX.Direct3D11.BlendState> BlendStateCache;
-            public readonly GraphicsCache<RasterizerStateDescription, RasterizerStateDescription, SharpDX.Direct3D11.RasterizerState> RasterizerStateCache;
-            public readonly GraphicsCache<DepthStencilStateDescription, DepthStencilStateDescription, SharpDX.Direct3D11.DepthStencilState> DepthStencilStateCache;
+            public readonly GraphicsCache<ShaderBytecode, ObjectId, ComPtr<ID3D11VertexShader>> VertexShaderCache;
+            public readonly GraphicsCache<ShaderBytecode, ObjectId, ComPtr<ID3D11PixelShader>> PixelShaderCache;
+            public readonly GraphicsCache<ShaderBytecode, ObjectId, ComPtr<ID3D11GeometryShader>> GeometryShaderCache;
+            public readonly GraphicsCache<ShaderBytecode, ObjectId, ComPtr<ID3D11HullShader>> HullShaderCache;
+            public readonly GraphicsCache<ShaderBytecode, ObjectId, ComPtr<ID3D11DomainShader>> DomainShaderCache;
+            public readonly GraphicsCache<ShaderBytecode, ObjectId, ComPtr<ID3D11ComputeShader>> ComputeShaderCache;
+            public readonly GraphicsCache<BlendStateDescription, BlendStateDescription, ComPtr<ID3D11BlendState>> BlendStateCache;
+            public readonly GraphicsCache<RasterizerStateDescription, RasterizerStateDescription, ComPtr<ID3D11RasterizerState>> RasterizerStateCache;
+            public readonly GraphicsCache<DepthStencilStateDescription, DepthStencilStateDescription, ComPtr<ID3D11DepthStencilState>> DepthStencilStateCache;
 
             public DevicePipelineStateCache(GraphicsDevice graphicsDevice)
             {
+                #region ShaderCreator
+                unsafe ComPtr<ID3D11VertexShader> CreateVertexShader(ShaderBytecode source)
+                {
+                    ComPtr<ID3D11VertexShader> shader = default;
+                    fixed (byte* pShaderBytecode = source.Data)
+                    {
+                        SilkMarshal.ThrowHResult(graphicsDevice.NativeDevice->CreateVertexShader(pShaderBytecode, (nuint)source.Data.Length, null, shader.GetAddressOf()));
+                    }
+                    return shader;
+                }
+
+                unsafe ComPtr<ID3D11PixelShader> CreatePixelShader(ShaderBytecode source)
+                {
+                    ComPtr<ID3D11PixelShader> shader = default;
+                    fixed (byte* pShaderBytecode = source.Data)
+                    {
+                        SilkMarshal.ThrowHResult(graphicsDevice.NativeDevice->CreatePixelShader(pShaderBytecode, (nuint)source.Data.Length, null, shader.GetAddressOf()));
+                    }
+                    return shader;
+                }
+
+                unsafe ComPtr<ID3D11GeometryShader> CreateGeometryShader(ShaderBytecode source)
+                {
+                    ComPtr<ID3D11GeometryShader> shader = default;
+                    fixed (byte* pShaderBytecode = source.Data)
+                    {
+                        SilkMarshal.ThrowHResult(graphicsDevice.NativeDevice->CreateGeometryShader(pShaderBytecode, (nuint)source.Data.Length, null, shader.GetAddressOf()));
+                    }
+                    return shader;
+                }
+
+                unsafe ComPtr<ID3D11HullShader> CreateHullShader(ShaderBytecode source)
+                {
+                    ComPtr<ID3D11HullShader> shader = default;
+                    fixed (byte* pShaderBytecode = source.Data)
+                    {
+                        SilkMarshal.ThrowHResult(graphicsDevice.NativeDevice->CreateHullShader(pShaderBytecode, (nuint)source.Data.Length, null, shader.GetAddressOf()));
+                    }
+                    return shader;
+                }
+
+                unsafe ComPtr<ID3D11DomainShader> CreateDomainShader(ShaderBytecode source)
+                {
+                    ComPtr<ID3D11DomainShader> shader = default;
+                    fixed (byte* pShaderBytecode = source.Data)
+                    {
+                        SilkMarshal.ThrowHResult(graphicsDevice.NativeDevice->CreateDomainShader(pShaderBytecode, (nuint)source.Data.Length, null, shader.GetAddressOf()));
+                    }
+                    return shader;
+                }
+
+                unsafe ComPtr<ID3D11ComputeShader> CreateComputeShader(ShaderBytecode source)
+                {
+                    ComPtr<ID3D11ComputeShader> shader = default;
+                    fixed (byte* pShaderBytecode = source.Data)
+                    {
+                        SilkMarshal.ThrowHResult(graphicsDevice.NativeDevice->CreateComputeShader(pShaderBytecode, (nuint)source.Data.Length, null, shader.GetAddressOf()));
+                    }
+                    return shader;
+                }
+
+                unsafe ComPtr<ID3D11BlendState> InitBlendState(BlendStateDescription source)
+                {
+                    ComPtr<ID3D11BlendState> state = default;
+                    var desc = CreateBlendState(source);
+                    SilkMarshal.ThrowHResult(graphicsDevice.NativeDevice->CreateBlendState(&desc, state.GetAddressOf()));
+
+                    return state;
+                }
+
+                unsafe ComPtr<ID3D11RasterizerState> InitRasterizerState(RasterizerStateDescription source)
+                {
+                    ComPtr<ID3D11RasterizerState> state = default;
+                    var desc = CreateRasterizerState(source);
+                    SilkMarshal.ThrowHResult(graphicsDevice.NativeDevice->CreateRasterizerState(&desc, state.GetAddressOf()));
+
+                    return state;
+                }
+
+                unsafe ComPtr<ID3D11DepthStencilState> InitDepthStencilState(DepthStencilStateDescription source)
+                {
+                    ComPtr<ID3D11DepthStencilState> state = default;
+                    var desc = CreateDepthStencilState(source);
+                    SilkMarshal.ThrowHResult(graphicsDevice.NativeDevice->CreateDepthStencilState(&desc, state.GetAddressOf()));
+
+                    return state;
+                }
+                #endregion
+
                 // Shaders
-                VertexShaderCache = new GraphicsCache<ShaderBytecode, ObjectId, SharpDX.Direct3D11.VertexShader>(source => source.Id, source => new SharpDX.Direct3D11.VertexShader(graphicsDevice.NativeDevice, source));
-                PixelShaderCache = new GraphicsCache<ShaderBytecode, ObjectId, SharpDX.Direct3D11.PixelShader>(source => source.Id, source => new SharpDX.Direct3D11.PixelShader(graphicsDevice.NativeDevice, source));
-                GeometryShaderCache = new GraphicsCache<ShaderBytecode, ObjectId, SharpDX.Direct3D11.GeometryShader>(source => source.Id, source => new SharpDX.Direct3D11.GeometryShader(graphicsDevice.NativeDevice, source));
-                HullShaderCache = new GraphicsCache<ShaderBytecode, ObjectId, SharpDX.Direct3D11.HullShader>(source => source.Id, source => new SharpDX.Direct3D11.HullShader(graphicsDevice.NativeDevice, source));
-                DomainShaderCache = new GraphicsCache<ShaderBytecode, ObjectId, SharpDX.Direct3D11.DomainShader>(source => source.Id, source => new SharpDX.Direct3D11.DomainShader(graphicsDevice.NativeDevice, source));
-                ComputeShaderCache = new GraphicsCache<ShaderBytecode, ObjectId, SharpDX.Direct3D11.ComputeShader>(source => source.Id, source => new SharpDX.Direct3D11.ComputeShader(graphicsDevice.NativeDevice, source));
+                VertexShaderCache = new GraphicsCache<ShaderBytecode, ObjectId, ComPtr<ID3D11VertexShader>>(source => source.Id, CreateVertexShader);
+                PixelShaderCache = new GraphicsCache<ShaderBytecode, ObjectId, ComPtr<ID3D11PixelShader>>(source => source.Id, CreatePixelShader);
+                GeometryShaderCache = new GraphicsCache<ShaderBytecode, ObjectId, ComPtr<ID3D11GeometryShader>>(source => source.Id, CreateGeometryShader);
+                HullShaderCache = new GraphicsCache<ShaderBytecode, ObjectId, ComPtr<ID3D11HullShader>>(source => source.Id, CreateHullShader);
+                DomainShaderCache = new GraphicsCache<ShaderBytecode, ObjectId, ComPtr<ID3D11DomainShader>>(source => source.Id, CreateDomainShader);
+                ComputeShaderCache = new GraphicsCache<ShaderBytecode, ObjectId, ComPtr<ID3D11ComputeShader>>(source => source.Id, CreateComputeShader);
 
                 // States
-                BlendStateCache = new GraphicsCache<BlendStateDescription, BlendStateDescription, SharpDX.Direct3D11.BlendState>(source => source, source => new SharpDX.Direct3D11.BlendState(graphicsDevice.NativeDevice, CreateBlendState(source)));
-                RasterizerStateCache = new GraphicsCache<RasterizerStateDescription, RasterizerStateDescription, SharpDX.Direct3D11.RasterizerState>(source => source, source => new SharpDX.Direct3D11.RasterizerState(graphicsDevice.NativeDevice, CreateRasterizerState(source)));
-                DepthStencilStateCache = new GraphicsCache<DepthStencilStateDescription, DepthStencilStateDescription, SharpDX.Direct3D11.DepthStencilState>(source => source, source => new SharpDX.Direct3D11.DepthStencilState(graphicsDevice.NativeDevice, CreateDepthStencilState(source)));
+                BlendStateCache = new GraphicsCache<BlendStateDescription, BlendStateDescription, ComPtr<ID3D11BlendState>>(source => source, InitBlendState);
+                RasterizerStateCache = new GraphicsCache<RasterizerStateDescription, RasterizerStateDescription, ComPtr<ID3D11RasterizerState>>(source => source, InitRasterizerState);
+                DepthStencilStateCache = new GraphicsCache<DepthStencilStateDescription, DepthStencilStateDescription, ComPtr<ID3D11DepthStencilState>>(source => source, InitDepthStencilState);
             }
 
-            private unsafe SharpDX.Direct3D11.BlendStateDescription CreateBlendState(BlendStateDescription description)
+            private unsafe BlendDesc CreateBlendState(BlendStateDescription description)
             {
-                var nativeDescription = new SharpDX.Direct3D11.BlendStateDescription();
+                var nativeDescription = new BlendDesc();
 
-                nativeDescription.AlphaToCoverageEnable = description.AlphaToCoverageEnable;
-                nativeDescription.IndependentBlendEnable = description.IndependentBlendEnable;
+                nativeDescription.AlphaToCoverageEnable = Convert.ToInt32(description.AlphaToCoverageEnable);
+                nativeDescription.IndependentBlendEnable = Convert.ToInt32(description.IndependentBlendEnable);
 
                 var renderTargets = &description.RenderTarget0;
                 for (int i = 0; i < 8; i++)
                 {
                     ref var renderTarget = ref renderTargets[i];
                     ref var nativeRenderTarget = ref nativeDescription.RenderTarget[i];
-                    nativeRenderTarget.IsBlendEnabled = renderTarget.BlendEnable;
-                    nativeRenderTarget.SourceBlend = (SharpDX.Direct3D11.BlendOption)renderTarget.ColorSourceBlend;
-                    nativeRenderTarget.DestinationBlend = (SharpDX.Direct3D11.BlendOption)renderTarget.ColorDestinationBlend;
-                    nativeRenderTarget.BlendOperation = (SharpDX.Direct3D11.BlendOperation)renderTarget.ColorBlendFunction;
-                    nativeRenderTarget.SourceAlphaBlend = (SharpDX.Direct3D11.BlendOption)renderTarget.AlphaSourceBlend;
-                    nativeRenderTarget.DestinationAlphaBlend = (SharpDX.Direct3D11.BlendOption)renderTarget.AlphaDestinationBlend;
-                    nativeRenderTarget.AlphaBlendOperation = (SharpDX.Direct3D11.BlendOperation)renderTarget.AlphaBlendFunction;
-                    nativeRenderTarget.RenderTargetWriteMask = (SharpDX.Direct3D11.ColorWriteMaskFlags)renderTarget.ColorWriteChannels;
+                    nativeRenderTarget.BlendEnable = Convert.ToInt32(renderTarget.BlendEnable);
+                    nativeRenderTarget.SrcBlend = (Silk.NET.Direct3D11.Blend)renderTarget.ColorSourceBlend;
+                    nativeRenderTarget.DestBlend = (Silk.NET.Direct3D11.Blend)renderTarget.ColorDestinationBlend;
+                    nativeRenderTarget.BlendOp = (BlendOp)renderTarget.ColorBlendFunction;
+                    nativeRenderTarget.SrcBlendAlpha = (Silk.NET.Direct3D11.Blend)renderTarget.AlphaSourceBlend;
+                    nativeRenderTarget.DestBlendAlpha = (Silk.NET.Direct3D11.Blend)renderTarget.AlphaDestinationBlend;
+                    nativeRenderTarget.BlendOpAlpha = (BlendOp)renderTarget.AlphaBlendFunction;
+                    nativeRenderTarget.RenderTargetWriteMask = (byte)renderTarget.ColorWriteChannels;
                 }
 
                 return nativeDescription;
             }
 
-            private SharpDX.Direct3D11.RasterizerStateDescription CreateRasterizerState(RasterizerStateDescription description)
+            private RasterizerDesc CreateRasterizerState(RasterizerStateDescription description)
             {
-                SharpDX.Direct3D11.RasterizerStateDescription nativeDescription;
+                RasterizerDesc nativeDescription;
 
-                nativeDescription.CullMode = (SharpDX.Direct3D11.CullMode)description.CullMode;
-                nativeDescription.FillMode = (SharpDX.Direct3D11.FillMode)description.FillMode;
-                nativeDescription.IsFrontCounterClockwise = description.FrontFaceCounterClockwise;
+                nativeDescription.CullMode = (Silk.NET.Direct3D11.CullMode)description.CullMode;
+                nativeDescription.FillMode = (Silk.NET.Direct3D11.FillMode)description.FillMode;
+                nativeDescription.FrontCounterClockwise = Convert.ToInt32(description.FrontFaceCounterClockwise);
                 nativeDescription.DepthBias = description.DepthBias;
                 nativeDescription.SlopeScaledDepthBias = description.SlopeScaleDepthBias;
                 nativeDescription.DepthBiasClamp = description.DepthBiasClamp;
-                nativeDescription.IsDepthClipEnabled = description.DepthClipEnable;
-                nativeDescription.IsScissorEnabled = description.ScissorTestEnable;
-                nativeDescription.IsMultisampleEnabled = description.MultisampleCount > MultisampleCount.None;
-                nativeDescription.IsAntialiasedLineEnabled = description.MultisampleAntiAliasLine;
+                nativeDescription.DepthClipEnable = Convert.ToInt32(description.DepthClipEnable);
+                nativeDescription.ScissorEnable = Convert.ToInt32(description.ScissorTestEnable);
+                nativeDescription.MultisampleEnable = Convert.ToInt32(description.MultisampleCount > MultisampleCount.None);
+                nativeDescription.AntialiasedLineEnable = Convert.ToInt32(description.MultisampleAntiAliasLine);
 
                 return nativeDescription;
             }
 
-            private SharpDX.Direct3D11.DepthStencilStateDescription CreateDepthStencilState(DepthStencilStateDescription description)
+            private DepthStencilDesc CreateDepthStencilState(DepthStencilStateDescription description)
             {
-                SharpDX.Direct3D11.DepthStencilStateDescription nativeDescription;
+                DepthStencilDesc nativeDescription;
 
-                nativeDescription.IsDepthEnabled = description.DepthBufferEnable;
-                nativeDescription.DepthComparison = (SharpDX.Direct3D11.Comparison)description.DepthBufferFunction;
-                nativeDescription.DepthWriteMask = description.DepthBufferWriteEnable ? SharpDX.Direct3D11.DepthWriteMask.All : SharpDX.Direct3D11.DepthWriteMask.Zero;
+                nativeDescription.DepthEnable = Convert.ToInt32(description.DepthBufferEnable);
+                nativeDescription.DepthFunc = (ComparisonFunc)description.DepthBufferFunction;
+                nativeDescription.DepthWriteMask = description.DepthBufferWriteEnable ? DepthWriteMask.DepthWriteMaskAll : DepthWriteMask.DepthWriteMaskZero;
 
-                nativeDescription.IsStencilEnabled = description.StencilEnable;
+                nativeDescription.StencilEnable = Convert.ToInt32(description.StencilEnable);
                 nativeDescription.StencilReadMask = description.StencilMask;
                 nativeDescription.StencilWriteMask = description.StencilWriteMask;
 
-                nativeDescription.FrontFace.FailOperation = (SharpDX.Direct3D11.StencilOperation)description.FrontFace.StencilFail;
-                nativeDescription.FrontFace.PassOperation = (SharpDX.Direct3D11.StencilOperation)description.FrontFace.StencilPass;
-                nativeDescription.FrontFace.DepthFailOperation = (SharpDX.Direct3D11.StencilOperation)description.FrontFace.StencilDepthBufferFail;
-                nativeDescription.FrontFace.Comparison = (SharpDX.Direct3D11.Comparison)description.FrontFace.StencilFunction;
+                nativeDescription.FrontFace.StencilFailOp = (StencilOp)description.FrontFace.StencilFail;
+                nativeDescription.FrontFace.StencilPassOp = (StencilOp)description.FrontFace.StencilPass;
+                nativeDescription.FrontFace.StencilDepthFailOp = (StencilOp)description.FrontFace.StencilDepthBufferFail;
+                nativeDescription.FrontFace.StencilFunc = (ComparisonFunc)description.FrontFace.StencilFunction;
 
-                nativeDescription.BackFace.FailOperation = (SharpDX.Direct3D11.StencilOperation)description.BackFace.StencilFail;
-                nativeDescription.BackFace.PassOperation = (SharpDX.Direct3D11.StencilOperation)description.BackFace.StencilPass;
-                nativeDescription.BackFace.DepthFailOperation = (SharpDX.Direct3D11.StencilOperation)description.BackFace.StencilDepthBufferFail;
-                nativeDescription.BackFace.Comparison = (SharpDX.Direct3D11.Comparison)description.BackFace.StencilFunction;
+                nativeDescription.BackFace.StencilFailOp = (StencilOp)description.BackFace.StencilFail;
+                nativeDescription.BackFace.StencilPassOp = (StencilOp)description.BackFace.StencilPass;
+                nativeDescription.BackFace.StencilDepthFailOp = (StencilOp)description.BackFace.StencilDepthBufferFail;
+                nativeDescription.BackFace.StencilFunc = (ComparisonFunc)description.BackFace.StencilFunction;
 
                 return nativeDescription;
             }

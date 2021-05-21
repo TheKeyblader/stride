@@ -24,12 +24,13 @@
 #if STRIDE_GRAPHICS_API_DIRECT3D
 using System;
 using System.Reflection;
-using SharpDX;
-using SharpDX.DXGI;
-using SharpDX.Mathematics.Interop;
+using System.Runtime.InteropServices;
+using Silk.NET.Core.Native;
+using Silk.NET.Direct3D11;
+using Silk.NET.DXGI;
 using Stride.Core.Collections;
 #if STRIDE_GRAPHICS_API_DIRECT3D11
-using BackBufferResourceType = SharpDX.Direct3D11.Texture2D;
+using BackBufferResourceType = Silk.NET.Direct3D11.ID3D11Texture2D;
 #elif STRIDE_GRAPHICS_API_DIRECT3D12
 using BackBufferResourceType = SharpDX.Direct3D12.Resource;
 #endif
@@ -41,7 +42,7 @@ namespace Stride.Graphics
     /// </summary>
     public class SwapChainGraphicsPresenter : GraphicsPresenter
     {
-        private SwapChain swapChain;
+        private unsafe IDXGISwapChain* swapChain;
 
         private readonly Texture backBuffer;
 
@@ -56,18 +57,22 @@ namespace Stride.Graphics
         {
             PresentInterval = presentationParameters.PresentationInterval;
 
-            // Initialize the swap chain
-            swapChain = CreateSwapChain();
+            unsafe
+            {
+                // Initialize the swap chain
+                swapChain = CreateSwapChain();
 
-            backBuffer = new Texture(device).InitializeFromImpl(swapChain.GetBackBuffer<BackBufferResourceType>(0), Description.BackBufferFormat.IsSRgb());
-
+                BackBufferResourceType* ptr = null;
+                SilkMarshal.ThrowHResult(swapChain->GetBuffer(0, ref SilkMarshal.GuidOf<BackBufferResourceType>(), (void**)&ptr));
+                backBuffer = new Texture(device).InitializeFromImpl(ptr, Description.BackBufferFormat.IsSRgb());
+            }
             // Reload should get backbuffer from swapchain as well
             //backBufferTexture.Reload = graphicsResource => ((Texture)graphicsResource).Recreate(swapChain.GetBackBuffer<SharpDX.Direct3D11.Texture>(0));
         }
 
         public override Texture BackBuffer => backBuffer;
 
-        public override object NativePresenter => swapChain;
+        public override object NativePresenter { get { unsafe { return new IntPtr(swapChain); } } }
 
         public override bool IsFullScreen
         {
@@ -76,64 +81,73 @@ namespace Stride.Graphics
 #if STRIDE_PLATFORM_UWP
                 return false;
 #else
-                return swapChain.IsFullScreen;
+                unsafe
+                {
+                    int result = 0;
+                    SilkMarshal.ThrowHResult(swapChain->GetFullscreenState(&result, null));
+                    return result != 0;
+                }
 #endif
             }
 
             set
             {
 #if !STRIDE_PLATFORM_UWP
-                if (swapChain == null)
-                    return;
-
-                var outputIndex = Description.PreferredFullScreenOutputIndex;
-
-                // no outputs connected to the current graphics adapter
-                var output = GraphicsDevice.Adapter != null && outputIndex < GraphicsDevice.Adapter.Outputs.Length ? GraphicsDevice.Adapter.Outputs[outputIndex] : null;
-
-                Output currentOutput = null;
-
-                try
+                unsafe
                 {
-                    RawBool isCurrentlyFullscreen;
-                    swapChain.GetFullscreenState(out isCurrentlyFullscreen, out currentOutput);
-
-                    // check if the current fullscreen monitor is the same as new one
-                    // If not fullscreen, currentOutput will be null but output won't be, so don't compare them
-                    if (isCurrentlyFullscreen == value && (isCurrentlyFullscreen == false || (output != null && currentOutput != null && currentOutput.NativePointer == output.NativeOutput.NativePointer)))
+                    if (swapChain == null)
                         return;
-                }
-                finally
-                {
-                    currentOutput?.Dispose();
-                }
 
-                bool switchToFullScreen = value;
-                // If going to fullscreen mode: call 1) SwapChain.ResizeTarget 2) SwapChain.IsFullScreen
-                var description = new ModeDescription(backBuffer.ViewWidth, backBuffer.ViewHeight, Description.RefreshRate.ToSharpDX(), (SharpDX.DXGI.Format)Description.BackBufferFormat);
-                if (switchToFullScreen)
-                {
-                    OnDestroyed();
+                    var outputIndex = Description.PreferredFullScreenOutputIndex;
 
-                    Description.IsFullScreen = true;
+                    // no outputs connected to the current graphics adapter
+                    var output = GraphicsDevice.Adapter != null && outputIndex < GraphicsDevice.Adapter.Outputs.Length ? GraphicsDevice.Adapter.Outputs[outputIndex] : null;
 
-                    OnRecreated();
-                }
-                else
-                {
-                    Description.IsFullScreen = false;
-                    swapChain.IsFullScreen = false;
+                    IDXGIOutput* currentOutput = null;
 
-                    // call 1) SwapChain.IsFullScreen 2) SwapChain.Resize
-                    Resize(backBuffer.ViewWidth, backBuffer.ViewHeight, backBuffer.ViewFormat);
-                }
+                    try
+                    {
+                        int _isCurrentlyFullscreen = 0;
+                        SilkMarshal.ThrowHResult(swapChain->GetFullscreenState(ref _isCurrentlyFullscreen, ref currentOutput));
+                        bool isCurrentlyFullscreen = _isCurrentlyFullscreen != 0;
+                        // check if the current fullscreen monitor is the same as new one
+                        // If not fullscreen, currentOutput will be null but output won't be, so don't compare them
+                        if (isCurrentlyFullscreen == value && (isCurrentlyFullscreen == false || (output != null && currentOutput != null && currentOutput == output.NativeOutput)))
+                            return;
+                    }
+                    finally
+                    {
+                        if (currentOutput != null)
+                            currentOutput->Release();
+                    }
 
-                // If going to window mode: 
-                if (!switchToFullScreen)
-                {
-                    // call 1) SwapChain.IsFullScreen 2) SwapChain.Resize
-                    description.RefreshRate = new SharpDX.DXGI.Rational(0, 0);
-                    swapChain.ResizeTarget(ref description);
+                    bool switchToFullScreen = value;
+                    // If going to fullscreen mode: call 1) SwapChain.ResizeTarget 2) SwapChain.IsFullScreen
+                    var description = new ModeDesc((uint)backBuffer.ViewWidth, (uint)backBuffer.ViewHeight, Description.RefreshRate.ToSilk(), (Format)Description.BackBufferFormat);
+                    if (switchToFullScreen)
+                    {
+                        OnDestroyed();
+
+                        Description.IsFullScreen = true;
+
+                        OnRecreated();
+                    }
+                    else
+                    {
+                        Description.IsFullScreen = false;
+                        SilkMarshal.ThrowHResult(swapChain->SetFullscreenState(0, null));
+
+                        // call 1) SwapChain.IsFullScreen 2) SwapChain.Resize
+                        Resize(backBuffer.ViewWidth, backBuffer.ViewHeight, backBuffer.ViewFormat);
+                    }
+
+                    // If going to window mode: 
+                    if (!switchToFullScreen)
+                    {
+                        // call 1) SwapChain.IsFullScreen 2) SwapChain.Resize
+                        description.RefreshRate = new Silk.NET.DXGI.Rational(0, 0);
+                        SilkMarshal.ThrowHResult(swapChain->ResizeTarget(ref description));
+                    }
                 }
 #endif
             }
@@ -152,36 +166,39 @@ namespace Stride.Graphics
             try
             {
                 var presentInterval = GraphicsDevice.Tags.Get(ForcedPresentInterval) ?? PresentInterval;
-                swapChain.Present((int)presentInterval, PresentFlags.None);
+                unsafe
+                {
+                    SilkMarshal.ThrowHResult(swapChain->Present((uint)presentInterval, 0));
+                }
 #if STRIDE_GRAPHICS_API_DIRECT3D12
                 // Manually swap back buffer
                 backBuffer.NativeResource.Dispose();
                 backBuffer.InitializeFromImpl(swapChain.GetBackBuffer<BackBufferResourceType>((++bufferSwapIndex) % bufferCount), Description.BackBufferFormat.IsSRgb());
 #endif
             }
-            catch (SharpDXException sharpDxException)
+            catch (Exception sharpDxException)
             {
                 var deviceStatus = GraphicsDevice.GraphicsDeviceStatus;
                 throw new GraphicsException($"Unexpected error on Present (device status: {deviceStatus})", sharpDxException, deviceStatus);
             }
         }
 
-        protected override void OnNameChanged()
+        protected override unsafe void OnNameChanged()
         {
             base.OnNameChanged();
             if (Name != null && GraphicsDevice != null && GraphicsDevice.IsDebugMode && swapChain != null)
             {
-                swapChain.DebugName = Name;
+                ((IDXGIObject*)swapChain)->SetDebugName(Name);
             }
         }
 
-        protected internal override void OnDestroyed()
+        protected internal unsafe override void OnDestroyed()
         {
             // Manually update back buffer texture
             backBuffer.OnDestroyed();
             backBuffer.LifetimeState = GraphicsResourceLifetimeState.Destroyed;
 
-            swapChain.Dispose();
+            swapChain->Release();
             swapChain = null;
 
             base.OnDestroyed();
@@ -191,19 +208,23 @@ namespace Stride.Graphics
         {
             base.OnRecreated();
 
-            // Recreate swap chain
-            swapChain = CreateSwapChain();
+            unsafe
+            {
+                // Recreate swap chain
+                swapChain = CreateSwapChain();
 
-            // Get newly created native texture
-            var backBufferTexture = swapChain.GetBackBuffer<BackBufferResourceType>(0);
+                // Get newly created native texture
+                BackBufferResourceType* backBufferTexture = null;
+                SilkMarshal.ThrowHResult(swapChain->GetBuffer(0, ref SilkMarshal.GuidOf<BackBufferResourceType>(), (void**)&backBufferTexture));
 
-            // Put it in our back buffer texture
-            // TODO: Update new size
-            backBuffer.InitializeFromImpl(backBufferTexture, Description.BackBufferFormat.IsSRgb());
-            backBuffer.LifetimeState = GraphicsResourceLifetimeState.Active;
+                // Put it in our back buffer texture
+                // TODO: Update new size
+                backBuffer.InitializeFromImpl(backBufferTexture, Description.BackBufferFormat.IsSRgb());
+                backBuffer.LifetimeState = GraphicsResourceLifetimeState.Active;
+            }
         }
 
-        protected override void ResizeBackBuffer(int width, int height, PixelFormat format)
+        protected override unsafe void ResizeBackBuffer(int width, int height, PixelFormat format)
         {
             // Manually update back buffer texture
             backBuffer.OnDestroyed();
@@ -229,10 +250,11 @@ namespace Stride.Graphics
             if (format == backBuffer.Format)
                 format = PixelFormat.None;
 
-            swapChain.ResizeBuffers(bufferCount, width, height, (SharpDX.DXGI.Format)format, SwapChainFlags.None);
+            SilkMarshal.ThrowHResult(swapChain->ResizeBuffers((uint)bufferCount, (uint)width, (uint)height, (Format)format, 0));
 
             // Get newly created native texture
-            var backBufferTexture = swapChain.GetBackBuffer<BackBufferResourceType>(0);
+            BackBufferResourceType* backBufferTexture = null;
+            SilkMarshal.ThrowHResult(swapChain->GetBuffer(0, ref SilkMarshal.GuidOf<BackBufferResourceType>(), (void**)&backBufferTexture));
 
             // Put it in our back buffer texture
             backBuffer.InitializeFromImpl(backBufferTexture, Description.BackBufferFormat.IsSRgb());
@@ -285,7 +307,7 @@ namespace Stride.Graphics
             return fastList;
         }
 
-        private SwapChain CreateSwapChain()
+        private unsafe IDXGISwapChain* CreateSwapChain()
         {
             // Check for Window Handle parameter
             if (Description.DeviceWindowHandle == null)
@@ -368,7 +390,7 @@ namespace Stride.Graphics
         /// Create the SwapChain on Windows.
         /// </summary>
         /// <returns></returns>
-        private SwapChain CreateSwapChainForWindows()
+        private unsafe IDXGISwapChain* CreateSwapChainForWindows()
         {
             var hwndPtr = Description.DeviceWindowHandle.Handle;
             if (hwndPtr != IntPtr.Zero)
@@ -378,7 +400,7 @@ namespace Stride.Graphics
             throw new InvalidOperationException($"The {nameof(WindowHandle)}.{nameof(WindowHandle.Handle)} must not be zero.");
         }
 
-        private SwapChain CreateSwapChainForDesktop(IntPtr handle)
+        private unsafe IDXGISwapChain* CreateSwapChainForDesktop(IntPtr handle)
         {
             bufferCount = 1;
             var backbufferFormat = Description.BackBufferFormat;
@@ -388,41 +410,48 @@ namespace Stride.Graphics
             // TODO D3D12 Can we make it work with something else after?
             bufferCount = 2;
 #endif
-            var description = new SwapChainDescription
-                {
-                    ModeDescription = new ModeDescription(Description.BackBufferWidth, Description.BackBufferHeight, Description.RefreshRate.ToSharpDX(), (SharpDX.DXGI.Format)backbufferFormat), 
-                    BufferCount = bufferCount, // TODO: Do we really need this to be configurable by the user?
-                    OutputHandle = handle,
-                    SampleDescription = new SampleDescription((int)Description.MultisampleCount, 0),
+            var description = new SwapChainDesc
+            {
+                BufferDesc = new ModeDesc((uint)Description.BackBufferWidth, (uint)Description.BackBufferHeight, Description.RefreshRate.ToSilk(), (Format)backbufferFormat),
+                BufferCount = (uint)bufferCount, // TODO: Do we really need this to be configurable by the user?
+                OutputWindow = handle,
+                SampleDesc = new SampleDesc((uint)Description.MultisampleCount, 0),
 #if STRIDE_GRAPHICS_API_DIRECT3D11
-                    SwapEffect = SwapEffect.Discard,
+                SwapEffect = SwapEffect.SwapEffectDiscard,
 #elif STRIDE_GRAPHICS_API_DIRECT3D12
                     SwapEffect = SwapEffect.FlipDiscard,
 #endif
-                    Usage = SharpDX.DXGI.Usage.BackBuffer | SharpDX.DXGI.Usage.RenderTargetOutput,
-                    IsWindowed = true,
-                    Flags = Description.IsFullScreen ? SwapChainFlags.AllowModeSwitch : SwapChainFlags.None, 
-                };
+                BufferUsage = DXGI.UsageBackBuffer | DXGI.UsageRenderTargetOutput,
+                Windowed = 1,
+                Flags = Description.IsFullScreen ? (uint)SwapChainFlag.SwapChainFlagAllowModeSwitch : 0,
+            };
 
 #if STRIDE_GRAPHICS_API_DIRECT3D11
-            var newSwapChain = new SwapChain(GraphicsAdapterFactory.NativeFactory, GraphicsDevice.NativeDevice, description);
+            IDXGISwapChain* newSwapChain = null;
+            SilkMarshal.ThrowHResult(GraphicsAdapterFactory.NativeFactory->CreateSwapChain(
+                (IUnknown*)GraphicsDevice.NativeDevice, ref description, ref newSwapChain));
 #elif STRIDE_GRAPHICS_API_DIRECT3D12
             var newSwapChain = new SwapChain(GraphicsAdapterFactory.NativeFactory, GraphicsDevice.NativeCommandQueue, description);
 #endif
 
             //prevent normal alt-tab
-            GraphicsAdapterFactory.NativeFactory.MakeWindowAssociation(handle, WindowAssociationFlags.IgnoreAltEnter);
+            SilkMarshal.ThrowHResult(GraphicsAdapterFactory.NativeFactory->MakeWindowAssociation(handle, 0x1));
 
             if (Description.IsFullScreen)
             {
                 // Before fullscreen switch
-                newSwapChain.ResizeTarget(ref description.ModeDescription);
+                SilkMarshal.ThrowHResult(newSwapChain->ResizeTarget(ref description.BufferDesc));
 
                 // Switch to full screen
-                newSwapChain.IsFullScreen = true;
+                SilkMarshal.ThrowHResult(newSwapChain->SetFullscreenState(1, null));
 
-                // This is really important to call ResizeBuffers AFTER switching to IsFullScreen 
-                newSwapChain.ResizeBuffers(bufferCount, Description.BackBufferWidth, Description.BackBufferHeight, (SharpDX.DXGI.Format)Description.BackBufferFormat, SwapChainFlags.AllowModeSwitch);
+                // This is really important to call ResizeBuffers AFTER switching to IsFullScreen
+                SilkMarshal.ThrowHResult(newSwapChain->ResizeBuffers(
+                    (uint)bufferCount,
+                    (uint)Description.BackBufferWidth,
+                    (uint)Description.BackBufferHeight,
+                    (Format)Description.BackBufferFormat,
+                    (uint)SwapChainFlag.SwapChainFlagAllowModeSwitch));
             }
 
             return newSwapChain;

@@ -30,9 +30,9 @@ namespace Stride.Graphics
 {
     internal class ColorHelper
     {
-        public static unsafe RawColor4 Convert(Color4 color)
+        public static unsafe float* Convert(Color4 color)
         {
-            return *(RawColor4*)&color;
+            return (float*)&color;
         }
 
         public static unsafe Color4 Convert(RawColor4 color)

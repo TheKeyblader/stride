@@ -58,7 +58,7 @@
     <ProjectReference Include="..\Stride.Native\Stride.Native.csproj" />
     <ProjectReference Include="..\Stride.Shaders\Stride.Shaders.csproj" />
     <ProjectReference Include="..\Stride\Stride.csproj" />
-    <PackageReference Include="SharpDX.Direct3D11" Version="4.2.0" Condition="'$(StridePlatform)' == 'Windows' Or '$(StridePlatform)' == 'UWP'" />
+    <PackageReference Include="Silk.NET.Direct3D11" Version="2.4.0" Condition="'$(StridePlatform)' == 'Windows' Or '$(StridePlatform)' == 'UWP'" />
     <PackageReference Include="SharpDX.Direct3D12" Version="4.2.0" Condition="'$(StridePlatform)' == 'Windows'" />
     <PackageReference Include="SharpDX.D3DCompiler" Version="4.2.0" Condition="'$(StridePlatform)' == 'Windows' Or '$(StridePlatform)' == 'UWP'" />
     <PackageReference Include="Vortice.Vulkan" Version="1.2.167" Condition="'$(StridePlatform)' == 'Windows' Or '$(StridePlatform)' == 'Linux' Or '$(StridePlatform)' == 'macOS'" />

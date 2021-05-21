@@ -22,9 +22,9 @@ namespace Stride.Graphics
         /// Converts to SharpDX representation.
         /// </summary>
         /// <returns>SharpDX.DXGI.Rational.</returns>
-        internal SharpDX.DXGI.Rational ToSharpDX()
+        internal Silk.NET.DXGI.Rational ToSilk()
         {
-            return new SharpDX.DXGI.Rational(Numerator, Denominator);
+            return new Silk.NET.DXGI.Rational((uint)Numerator, (uint)Denominator);
         }
     }
 }

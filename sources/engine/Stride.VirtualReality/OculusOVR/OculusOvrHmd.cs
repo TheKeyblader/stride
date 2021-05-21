@@ -6,6 +6,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using SharpDX.Direct3D11;
+using Silk.NET.Direct3D11;
 using Stride.Core.Mathematics;
 using Stride.Games;
 using Stride.Graphics;
@@ -48,7 +49,7 @@ namespace Stride.VirtualReality
             }
         }
 
-        public override void Enable(GraphicsDevice device, GraphicsDeviceManager graphicsDeviceManager, bool requireMirror, int mirrorWidth, int mirrorHeight)
+        public unsafe override void Enable(GraphicsDevice device, GraphicsDeviceManager graphicsDeviceManager, bool requireMirror, int mirrorWidth, int mirrorHeight)
         {
             graphicsDevice = device;
             long adapterId;
@@ -56,7 +57,7 @@ namespace Stride.VirtualReality
             //Game.GraphicsDeviceManager.RequiredAdapterUid = adapterId.ToString(); //should not be needed
 
             int texturesCount;
-            if (!OculusOvr.CreateTexturesDx(ovrSession, device.NativeDevice.NativePointer, out texturesCount, RenderFrameScaling, requireMirror ? mirrorWidth : 0, requireMirror ? mirrorHeight : 0))
+            if (!OculusOvr.CreateTexturesDx(ovrSession, new IntPtr(device.NativeDevice), out texturesCount, RenderFrameScaling, requireMirror ? mirrorWidth : 0, requireMirror ? mirrorHeight : 0))
             {
                 throw new Exception(OculusOvr.GetError());
             }
@@ -65,7 +66,7 @@ namespace Stride.VirtualReality
             {
                 var mirrorTex = OculusOvr.GetMirrorTexture(ovrSession, Dx11Texture2DGuid);
                 MirrorTexture = new Texture(device);
-                MirrorTexture.InitializeFromImpl(new Texture2D(mirrorTex), false);
+                MirrorTexture.InitializeFromImpl((ID3D11Texture2D*)mirrorTex.ToPointer(), false);
             }
 
             textures = new Texture[texturesCount];
@@ -78,7 +79,7 @@ namespace Stride.VirtualReality
                 }
 
                 textures[i] = new Texture(device);
-                textures[i].InitializeFromImpl(new Texture2D(ptr), false);
+                textures[i].InitializeFromImpl((ID3D11Texture2D*)ptr.ToPointer(), false);
             }
 
             ActualRenderFrameSize = new Size2(textures[0].Width, textures[0].Height);
@@ -162,7 +163,7 @@ namespace Stride.VirtualReality
                 return initDone;
             }
         }
-        
+
         public override void Recenter()
         {
             OculusOvr.Recenter(ovrSession);

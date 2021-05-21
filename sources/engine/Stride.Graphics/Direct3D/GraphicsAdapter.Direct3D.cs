@@ -23,10 +23,10 @@
 using System;
 using System.Collections.Generic;
 using System.Resources;
-using SharpDX;
-using SharpDX.Direct3D;
-using SharpDX.Direct3D11;
-using SharpDX.DXGI;
+using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
+using Silk.NET.Core.Native;
+using Silk.NET.DXGI;
 using Stride.Core;
 using ComponentBase = Stride.Core.ComponentBase;
 using Utilities = Stride.Core.Utilities;
@@ -41,9 +41,9 @@ namespace Stride.Graphics
     /// <unmanaged-short>IDXGIAdapter1</unmanaged-short>
     public partial class GraphicsAdapter
     {
-        private readonly Adapter1 adapter;
+        private unsafe readonly ComPtr<IDXGIAdapter1> adapter;
         private readonly int adapterOrdinal;
-        private readonly AdapterDescription1 description;
+        private unsafe readonly AdapterDesc1 description;
 
         private GraphicsProfile minimumUnsupportedProfile = (GraphicsProfile)int.MaxValue;
         private GraphicsProfile maximumSupportedProfile;
@@ -53,20 +53,40 @@ namespace Stride.Graphics
         /// </summary>
         /// <param name="defaultFactory">The default factory.</param>
         /// <param name="adapterOrdinal">The adapter ordinal.</param>
-        internal GraphicsAdapter(Factory1 defaultFactory, int adapterOrdinal)
+        internal unsafe GraphicsAdapter(IDXGIFactory1* defaultFactory, int adapterOrdinal)
         {
             this.adapterOrdinal = adapterOrdinal;
-            adapter = defaultFactory.GetAdapter1(adapterOrdinal).DisposeBy(this);
-            description = adapter.Description1;
-            description.Description = description.Description.TrimEnd('\0'); // for some reason sharpDX returns an adaptater name of fixed size filled with trailing '\0'
+
+            var handle = (IDXGIAdapter*)adapter.Handle;
+            SilkMarshal.ThrowHResult
+            (
+                defaultFactory->CreateSoftwareAdapter
+                (
+                    adapterOrdinal,
+                    ref handle
+                )
+            );
+            adapter.DisposeBy(this);
+
+            SilkMarshal.ThrowHResult
+            (
+                adapter.Handle->GetDesc1(ref description)
+            );
+
+            //description.Description = description.Description.TrimEnd('\0'); // for some reason sharpDX returns an adaptater name of fixed size filled with trailing '\0'
             //var nativeOutputs = adapter.Outputs;
 
-            var count = adapter.GetOutputCount();
-            outputs = new GraphicsOutput[count];
-            for (var i = 0; i < outputs.Length; i++)
-                outputs[i] = new GraphicsOutput(this, i).DisposeBy(this);
+            uint i = 0;
+            var _outputs = new List<GraphicsOutput>();
+            IDXGIOutput* output;
+            while (adapter.Handle->EnumOutputs(i, &output) != unchecked((int)DXGIError.NotFound))
+            {
+                _outputs.Add(new GraphicsOutput(this, (int)i, output));
+                ++i;
+            }
+            outputs = _outputs.ToArray();
 
-            AdapterUid = adapter.Description1.Luid.ToString();
+            AdapterUid = description.AdapterLuid.Item1.ToString();
         }
 
         /// <summary>
@@ -77,7 +97,13 @@ namespace Stride.Graphics
         {
             get
             {
-                return description.Description;
+                unsafe
+                {
+                    fixed (char* str = description.Description)
+                    {
+                        return new(str);
+                    }
+                }
             }
         }
 
@@ -89,7 +115,7 @@ namespace Stride.Graphics
         /// </value>
         public int VendorId
         {
-            get { return description.VendorId; }
+            get { return (int)description.VendorId; }
         }
 
         /// <summary>
@@ -103,7 +129,7 @@ namespace Stride.Graphics
             }
         }
 
-        internal Adapter1 NativeAdapter
+        internal unsafe IDXGIAdapter1* NativeAdapter
         {
             get
             {
@@ -130,18 +156,21 @@ namespace Stride.Graphics
                 return false;
 
             // Check and min/max cached values
-            if (SharpDX.Direct3D11.Device.IsSupportedFeatureLevel(this.NativeAdapter, (SharpDX.Direct3D.FeatureLevel)graphicsProfile))
+            unsafe
             {
-                maximumSupportedProfile = graphicsProfile;
-                return true;
-            }
-            else
-            {
-                minimumUnsupportedProfile = graphicsProfile;
-                return false;
+                if (SilkHelper.IsSupportedFeatureLevel((IDXGIAdapter*)NativeAdapter, (D3DFeatureLevel)graphicsProfile))
+                {
+                    maximumSupportedProfile = graphicsProfile;
+                    return true;
+                }
+                else
+                {
+                    minimumUnsupportedProfile = graphicsProfile;
+                    return false;
+                }
             }
 #endif
         }
     }
-} 
+}
 #endif

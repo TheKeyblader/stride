@@ -1,56 +1,60 @@
-﻿// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net) and Silicon Studio Corp. (https://www.siliconstudio.co.jp)
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net) and Silicon Studio Corp. (https://www.siliconstudio.co.jp)
 // Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
 #if STRIDE_GRAPHICS_API_DIRECT3D11
 using System;
-using SharpDX.Direct3D11;
+using Silk.NET.Core.Native;
+using Silk.NET.Direct3D11;
 
 namespace Stride.Graphics
 {
     public partial class QueryPool
     {
-        internal Query[] NativeQueries;
+        internal unsafe ID3D11Query*[] NativeQueries;
 
         public bool TryGetData(long[] dataArray)
         {
             for (var index = 0; index < NativeQueries.Length; index++)
             {
-                if (!GraphicsDevice.NativeDeviceContext.GetData(NativeQueries[index], out dataArray[index]))
-                    return false;
+                unsafe
+                {
+                    HResult result = GraphicsDevice.NativeDeviceContext->GetData((ID3D11Asynchronous*)NativeQueries[index], ref dataArray[index], sizeof(long), 0);
+                    if (result.IsError) return false;
+                }
             }
 
             return true;
         }
 
         /// <inheritdoc/>
-        protected internal override void OnDestroyed()
+        protected internal unsafe override void OnDestroyed()
         {
             for (var i = 0; i < QueryCount; i++)
             {
-                NativeQueries[i].Dispose();
+                NativeQueries[i]->Release();
             }
             NativeQueries = null;
 
             base.OnDestroyed();
         }
 
-        private void Recreate()
+        private unsafe void Recreate()
         {
-            var queryDescription = new QueryDescription();
+            var queryDescription = new QueryDesc();
 
             switch (QueryType)
             {
                 case QueryType.Timestamp:
-                    queryDescription.Type = SharpDX.Direct3D11.QueryType.Timestamp;
+                    queryDescription.Query = Query.QueryTimestamp;
                     break;
 
                 default:
                     throw new NotImplementedException();
             }
 
-            NativeQueries = new Query[QueryCount];
+            NativeQueries = new ID3D11Query*[QueryCount];
             for (var i = 0; i < QueryCount; i++)
             {
-                NativeQueries[i] = new Query(NativeDevice, queryDescription);
+                SilkMarshal.ThrowHResult(NativeDevice->CreateQuery(ref queryDescription, ref NativeQueries[i]));
             }
         }
     }
